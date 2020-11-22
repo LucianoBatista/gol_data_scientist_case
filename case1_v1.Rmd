@@ -1,14 +1,22 @@
 ---
-title: "Case1"
+title: "Case 1"
 ---
 
+No case 1 foi solicitado para resolver 6 diferentes questões, abaixo você encontra todo o código comentado responsável pelas análise juntamente com as justificativas de todo o processo.
+
 # Libs
+
+Pacotes utilizados no case 1.
 
 ```{r}
 library(tidyverse)
 library(xlsx)
 library(janitor)
 library(lubridate)
+library(rbcb) # não disponível no CRAN, use `devtools::install_github('wilsonfreitas/rbcb')` para instalar
+library(tidytext)
+library(patchwork)
+library(tictoc)
 
 # time series
 library(timetk)
@@ -19,76 +27,100 @@ library(tidymodels)
 
 # Dados
 
+Importando os dados para o ambiente de trabalho.
+
 ```{r}
 gol_case1 <- read.xlsx("dados/case_analytics-ds.xlsx", sheetIndex = 2) %>% tibble() %>% clean_names()
 
 ```
 
-Data indo de 2016-11-01 até 2017-04-01.
-
 # Problemas
 
-## 1 - Ranking para o número total de PAX por dia da semana
+## 1 - Faça um ranking para o número total de PAX por dia da semana.
 
-PAX = total de passageiros
+*PAX = total de passageiros*
 
 ```{r}
 gol_case1 %>% 
   mutate(wday = wday(data_venda, label = TRUE, abbr = FALSE)) %>% 
   group_by(wday) %>% 
   summarise(pax_total_wday = sum(pax)) %>% 
+  ungroup() %>% 
   arrange(desc(pax_total_wday))
   
-
-# colocar a mesma análise por períodos: mensal e anual
-
 ```
+
+Como foi visto acima, a **quarta-feira** possui o maior total de passageiros na base, mais de 293k.
 
 ## 2 - Qual a correlação de sábado e domingo somados com o total de RPK?
 
-RPK = um indicador relacionado ao PAX
-
-Correlação entre sábado e domingo provavelmente estão querendo um ACF ou PACF plot
-
-Voltar aqui depois, acredito que ela quer uma correlação com um one hot com colunas como dias da semana.
+A questão não foi explícita em solicitar a variável com a qual deseja a correlação, apenas disse que era a soma de sábado e domingo e não a soma do monetário ou outra feature. Sendo assim, eu trouxe um gráfico de auto-correlação da série do total de RPK.
 
 ```{r}
-# ajustando a série
-gol_case1 %>% 
-  summarise_by_time(.date_var = data_venda, by = "day", rpk_total = sum(rpk)) %>% 
-  select(-by) %>% 
-  plot_acf_diagnostics(.date_var = data_venda, .value = rpk_total)
-  
-gol_case1 %>% 
-  summarise_by_time(.date_var = data_venda, by = "day", rpk_total = sum(rpk)) %>%
-  mutate(wday = wday(data_venda)) %>% 
-  mutate(lag1 = lag_vec(wday, lag = 1),
-         acf = acf(rpk_total, lag.max = 1, plot = F),
-         # sábado é 7, domingo é 1
-         names  = wday(data_venda, label = TRUE)) %>% View()
-
+# série temporal do total de rpk
 gol_case1 %>% 
   summarise_by_time(.date_var = data_venda, by = "day", rpk_total = sum(rpk)) %>% 
   select(-by) %>% 
   plot_time_series(.date_var = data_venda, .value = rpk_total, .smooth = FALSE)
-
-
-
-
 ```
 
-## 3 - Qual a média de Monetário por mês por Canal? E a mediana?
+Essa é nossa série temporal para o total de RPK, onde observamos alguns picos de passageiros ocorrendo mensalmente.
 
 ```{r}
+# plot do ACF e PACF
 gol_case1 %>% 
-  mutate(year = year(data_venda),
-         month = month(data_venda, label = TRUE, abbr = F)) %>% 
-  group_by(year, month) %>% 
-  summarise(mean = mean(monetario_vendido),
-            median = median(monetario_vendido))
-
+  summarise_by_time(.date_var = data_venda, by = "day", rpk_total = sum(rpk)) %>% 
+  select(-by) %>% 
+  plot_acf_diagnostics(.date_var = data_venda, .value = rpk_total)
 
 ```
+
+Aqui podemos ver que sempre em um lag semanal temos uma queda da correlação, que sobe a na semana subsequente e atingi um pico com aproximadamente 28 dias (lags). Esse padrão se repete até desaparecer completamente.
+
+## 3 - Qual a média de `monetario_vendido` por mês por canal? E a mediana?
+
+```{r}
+summaries_q3_tbl <- gol_case1 %>% 
+  mutate(year = year(data_venda),
+         month = month(data_venda, label = TRUE, abbr = F)) %>% 
+  group_by(year, month, canal_de_venda) %>% 
+  summarise(mean = mean(monetario_vendido),
+            median = median(monetario_vendido)) %>% 
+  ungroup() %>% 
+  mutate(year = as.character(year)) %>% 
+  mutate(year_char = str_c(year, month, sep = "/") %>% as_factor())
+
+# média
+summaries_q3_tbl %>% 
+  ggplot(aes(x = mean,
+             y = tidytext::reorder_within(year_char, mean, canal_de_venda))) +
+  geom_col() +
+  tidytext::scale_y_reordered() +
+  facet_wrap(~canal_de_venda, scales = "free_y", ncol = 1)
+```
+
+Para média, observando o gráfico, temos:
+
+- **Porta a Porta**: o mês de maior venda foi o de *Novembro de 2016* e o de menor venda foi *Dezembro de 2016*.
+- **Telégrafo**: o mês de maior venda foi o de *Dezembro de 2016* e o de menor venda foi *Abril de 2017*. Esse canal é também o de menor venda no geral, bem inferior as outras classes.
+- **Tele Venda**: o mês de maior venda foi o de *Abril de 2017* e o de menor venda foi *Dezembro de 2016*.
+
+```{r}
+# mediana
+summaries_q3_tbl %>% 
+  ggplot(aes(x = median,
+             y = tidytext::reorder_within(year_char, median, canal_de_venda))) +
+  geom_col() +
+  tidytext::scale_y_reordered() +
+  facet_wrap(~canal_de_venda, scales = "free", ncol = 1)
+
+```
+
+Para mediana, observando o gráfico, temos:
+
+- **Porta a Porta**: o mês de maior venda foi o de *Abril de 2017* e o de menor venda foi *Dezembro de 2016*.
+- **Telégrafo**: o mês de maior venda foi o de *Março de 2016* e o de menor venda foi *Abril de 2017*. Curiosamente, esse canal na mediana possui um valor coerente com os demais.
+- **Tele Venda**: o mês de maior venda foi o de *Abril de 2017* e o de menor venda foi *Dezembro de 2016*. Sendo a mediana do período de maior venda muito acima dos demais.
 
 ## 4 - Forecasting para os próximos 15 dias do PAX por local de venda
 
@@ -104,23 +136,30 @@ ts_gol_case1_tbl <- gol_case1 %>%
 # visualizando
 ts_gol_case1_tbl %>% 
   plot_time_series(.date_var = data_venda, 
-                   .value = log(total_pax), 
+                   .value = total_pax, 
                    .color_var = local_de_venda, 
                    .facet_var = local_de_venda,
                    .smooth = F)
 
 ```
 
-O que temos aqui são 4 séries temporais com período diário, isso nos dá 152 dias para cada série (pouca informação). Além disso, as séries são bastante semelhantes, praticamente em todo o período observamos picos e vales no mesmo dia.
+O que temos aqui são 4 séries temporais com período diário, isso nos dá 152 dias para cada série (pouca informação). Além disso, as séries são bastante semelhantes, praticamente em todo o período observamos picos e vales correlacionados.
 
 Vamos ver então como está a sazonalidade das 4 séries:
 
 ```{r}
-# sazonalidade
-ts_gol_case1_tbl %>% 
+# sazonalidade arena e Ellipsis
+g1 <- ts_gol_case1_tbl %>% 
   group_by(local_de_venda) %>% 
+  filter(local_de_venda %in% c("Arena", "Ellipsis")) %>% 
   plot_seasonal_diagnostics(data_venda, log(total_pax), .interactive = F)
 
+g2 <- ts_gol_case1_tbl %>% 
+  group_by(local_de_venda) %>% 
+  filter(!local_de_venda %in% c("Arena", "Ellipsis")) %>% 
+  plot_seasonal_diagnostics(data_venda, log(total_pax), .interactive = F)
+
+g1/g2
 
 ```
 
@@ -153,8 +192,7 @@ ts_gol_case1_tbl %>%
 
 ```
 
-
-Em todos os ACF/PACF plots nós visualizamos que existe uma autocorrelação mensal e que a mesma vai diminuindo ao longo do tempo. Nesse momento vale uma observação, ao observar essa correlção, nós poderíamos utilizar tais lags como preditores, porém existe uma perda que precisa ser levada em consideração em relação pois teríamos que sacrificar uma parte dos dados para isso. 
+Em todos os ACF/PACF plots nós visualizamos que existe uma autocorrelação mensal e que a mesma vai diminuindo ao longo do tempo. Nesse momento vale uma observação, ao identificar essa correlção, nós poderíamos utilizar tais lags como preditores, porém precisamos avaliar se realmente vale a pena sacrificar parte dos dados para aumentar o número de variáveis.
 
 Tendo visto esses aspectos dos nossos dados, eu vou prosseguir o forecasting por duas abordagens:
 
@@ -163,9 +201,12 @@ Tendo visto esses aspectos dos nossos dados, eu vou prosseguir o forecasting por
 
 ### 4.1 Modelo ARIMA
 
-Estarei utilizando o algorítimo desenvolvido pelo Rob J Hyndman (`auto_arima()`), que busca de forma iterativa pelos melhores parâmetros para p, q d, P, Q e D de acordo com a métrica AIC. Vamos primeiro visualizar para o local de venda *Arena*.
+Utilizarei o algorítimo desenvolvido pelo Rob J Hyndman (`auto_arima()`), que busca de forma iterativa pelos melhores parâmetros para p, q d, P, Q e D de acordo com a métrica AIC. O primeiro forecast irá ser feito para o local de venda **Arena**.
 
 Todas as etapas de modelagem serão feitas seguindo a filosofia do `tidymodels` e sua extensão para séries temporais o `modeltime`.
+
+O `modeltime` tem por objetivo organizar e otimizar o workflow de modelagem de séries temporais, como pode ser visto na imagem abaixo.
+[imagem]
 
 ```{r}
 # Arena
@@ -175,7 +216,11 @@ ts_box_cox_gol_case1_tbl <- ts_gol_case1_tbl %>%
   select(-local_de_venda) %>% 
   mutate(total_pax = box_cox_vec(total_pax))
 boxcox_soybean_lambda <- -0.338402149659834
+```
 
+Iniciaremos aplicando uma transformação Box-Cox nos nossos dados para minimizar a variância e consequentemente minimizando alguns picos de venda. Em seguindo, proseguimos com os splits em treino e teste. Onde utilizarei 40 dias para teste e os outros para treino.
+
+```{r}
 gol_case1_splits <- time_series_split(ts_box_cox_gol_case1_tbl, assess = "40 days", cumulative = TRUE)
 train_gol_case1_boxcox_tbl <- training(gol_case1_splits)
 test_gol_case1_boxcox_tbl <- testing(gol_case1_splits)
@@ -187,9 +232,13 @@ gol_case1_splits %>%
     title = "Soybean Training and Testing Splits",
     y = "BoxCox transformed values"
   )
+```
 
+Esses sãos os splits de treino e teste para nosso problema.
+
+```{r}
 # modelo
-# adicionei duas features para ajudar a captar a sazonalidade do modelo
+# adicionei algumas features para ajudar o algorítmo a captar a sazonalidade do modelo
 auto_arima_formula <- formula(total_pax ~ . +
                                 week(data_venda) +
                                 year(data_venda) +
@@ -226,7 +275,7 @@ calibration_boxcox_tbl %>%
   )
 ```
 
-O que vemos é que é bem difícil do modelo capturar uma boa variabilidade da série, mesmo adicionando algumas features. Vamos visualizar como ficaram os resíduos.
+O que vemos é que é bem difícil do modelo capturar uma boa variabilidade da série, mesmo adicionando algumas features. Vamos visualizar então como ficaram os resíduos após as predições nos dados de teste.
 
 ```{r}
 # vizualing residuals
@@ -277,53 +326,43 @@ forecast_gol_case1_tbl %>%
 
 ```
 
-No final, nós vemos que ocorrerá um pico de passageiros no dia X. 
+No final, nós vemos que ocorrerá um pico de passageiros no dia 14 de Abril de 2017, porém esse pico provavelmente será bem maior. Vemos que a dimensão dos picos de venda parece ser governada por alguma feature externa, como: períodos de promoções ou variação do preço do dólar.
 
-Esse pico provavelmente será bem maior, mas a dimensão é governada por alguma features externa, essa poderia ser adicionada ao modelo futuramente.
+Utilizando o `auto_arima()` nosso RMSE deu 0.0147 e o r² conseguiu explicar pouco da variância (0.135). 
 
+Diante de um cenário não muito animador, optei de utilizar uma abordagem com ML.
 
 
 ### 4.2 Procedimento utilizando modelos de ML com tunning e resampling
 
-
+Aqui usarei modelos não sequenciais (não fazem suposição sobre tempo). Além disso, as quatro séries temporais serão modeladas ao mesmo tempo, assim como o tunning (seleção dos melhores parâmetros) e o resampling (reamostragem) durante o treino.
 
 ```{r}
 # utilizando painéis
 full_data_gol_case1_tbl <- ts_gol_case1_tbl %>%
+  # transformação log para minimizar variância
   mutate(total_pax = log(total_pax)) %>% 
-  # Global Features / Transformations / Joins
-  #mutate(pageViews = log1p(pageViews)) %>%
-  # Group-Wise Feature Transformations
   group_by(local_de_venda) %>%
   # próximos 19 dias de forecast
   future_frame(data_venda, .length_out = 19, .bind_data = TRUE) %>%
   ungroup() %>%
-  
-  # Lags & Rolling Features / Fourier
   mutate(local_de_venda = as_factor(local_de_venda)) %>%
   group_by(local_de_venda) %>%
   group_split() %>%
-  # features
+  # criando a feature de lag em cada local de venda
   map(.f = function(df) {
     df %>%
       arrange(data_venda) %>%
-      tk_augment_lags(total_pax, .lags = 28) #%>%
-      # tk_augment_slidify(
-      #   pageViews_lag28,
-      #   .f       = ~ mean(.x, na.rm = TRUE),
-      #   .period  = c(7, 28, 28*2),
-      #   .partial = TRUE, 
-      #   .align   = "center"
-      #)
+      tk_augment_lags(total_pax, .lags = 28)
   }) %>%
   bind_rows() %>%
-  
+  # identificando cada linha
   rowid_to_column(var = "rowid")
 
 
 ```
 
-Preparo do dado que será utilizado no forecast
+Preparo dos dados que serão utilizados como treino e teste.
 
 ```{r}
 data_prepared_tbl <- full_data_gol_case1_tbl %>%
@@ -334,7 +373,7 @@ data_prepared_tbl
 
 ```
 
-Future tbl
+Preparo dos dados que serão utilizados no forecast.
 
 ```{r}
 future_tbl <- full_data_gol_case1_tbl %>%
@@ -342,9 +381,9 @@ future_tbl <- full_data_gol_case1_tbl %>%
 
 ```
 
-```{r}
-# 2.0 TIME SPLIT ----
+Splits em treino e teste, com 40 dias para teste e o resto para treino.
 
+```{r}
 splits <- data_prepared_tbl %>%
     time_series_split(data_venda, assess = 40, cumulative = TRUE)
 
@@ -355,9 +394,9 @@ splits %>%
 
 ```
 
+Criação das receitas.
+
 ```{r}
-library(tidymodels)
-# resampling
 set.seed(123)
 train <- training(splits) 
 
@@ -365,14 +404,9 @@ train %>%
   group_by(local_de_venda) %>% 
   plot_time_series(data_venda, total_pax, .smooth = F)
 
-# 3.0 RECIPE ----
+# RECIPE ----
 
-# * Clean Training Set ----
-# - With Panel Data, need to do this outside of a recipe
-# - Transformation happens by group
-
-# * Recipe Specification ----
-
+# especificação da `recipe`
 recipe_spec <- recipe(total_pax ~ ., data = train) %>%
   update_role(rowid, new_role = "indicator") %>%
   step_timeseries_signature(data_venda) %>%
@@ -381,10 +415,30 @@ recipe_spec <- recipe(total_pax ~ ., data = train) %>%
   step_zv(all_predictors()) %>% 
   step_dummy(all_nominal(), one_hot = TRUE)
 
+# visualização do novo dataset após a feature engineering
 recipe_spec %>% prep() %>% juice() %>% glimpse()
+```
 
-# 4.0 MODELS ----
-# - !!! REMINDER: Cannot use sequential models !!!
+O pacote `recipes` do `tidymodels` facilita a etapa de pré-processamento. Cada etapa realiza uma transformação nos dados de modo que ao final os dados possuem um diferente formato. Abaixo eu listo o que cada etapa está realizando nos nossos dados:
+
+- update_role: atualiza o papel de uma variável (a mesma não será utilizada para previsões)
+- step_timeseries_signature: cria mais de 30 variáveis decomposta a partir da nossa variável de data
+- step_rm: remove variávei, e nesse caso está removendo variáveis sem sentido que foram criadas pela etapa anterior
+- step_normalize: normaliza variáveis que possuem um range muito acima do presente no dataset
+- step_zv: remove variáveis com zero variância
+- step_dummy: dummifica variáveis categóricas
+
+Vamos agora aos modelos! Aqui eu optei por cinco modelos diferentes:
+
+- xgboost
+- SVM
+- Random Forest
+- NNET
+- MARS
+
+O procedimento aqui vai ser a criação dos modelos com os parâmetros default e depois utilizaremos a otimização.
+
+```{r}
 
 # * XGBOOST ----
 
@@ -404,7 +458,6 @@ wflw_fit_svm <- workflow() %>%
     ) %>%
     add_recipe(recipe_spec %>% update_role(data_venda, new_role = "indicator")) %>%
     fit(train)
-
 
 
 # * RANDOM FOREST ----
@@ -448,9 +501,14 @@ submodels_1_tbl <- modeltime_table(
 submodels_1_tbl %>%
     modeltime_accuracy(testing(splits)) %>%
     arrange(rmse)
+```
 
+Visualizando o RMSE, conseguimos um valor de 0.204 e o R² bem maior que o modelo ARIMA criando anteriormente. O RMSE aqui não é comparável ao ARIMA por que antes foi utilizado uma transformação box-cox e aqui uma transformação logaritima, porém pelo R² já conseguimos ver um ganho.
 
-# 5.0 HYPER PARAMETER TUNING ---- 
+Vamos seguir com o tunning dos modelos e depois analisar qual modelo foi o melhor.
+
+```{r}
+# HYPER PARAMETER TUNING ---- 
 
 # * RESAMPLES - K-FOLD ----- 
 
@@ -461,10 +519,15 @@ resamples_kfold %>%
     tk_time_series_cv_plan() %>%
     plot_time_series_cv_plan(data_venda, total_pax, .facet_ncol = 2)
 
+```
 
+Aqui estão os dados de treino divididos em validação. Cada fold utiliza uma amostragem dos dados de treino para avaliar como o modelo está se comportando para cada conjunto de parâmetros.
+
+
+```{r}
 # * XGBOOST TUNE ----
 library(tictoc)
-# ** Tunable Specification
+# especificação de tunagem
 
 model_spec_xgboost_tune <- boost_tree(
     mode            = "regression", 
@@ -481,7 +544,7 @@ wflw_spec_xgboost_tune <- workflow() %>%
     add_model(model_spec_xgboost_tune) %>%
     add_recipe(recipe_spec %>% update_role(data_venda, new_role = "indicator"))
 
-# ** Tuning
+# tuning
 
 tic()
 set.seed(123)
@@ -498,12 +561,12 @@ tune_results_xgboost <- wflw_spec_xgboost_tune %>%
 toc()
 
 
-# ** Results
+# resultados
 
 tune_results_xgboost %>% show_best("rmse", n = Inf)
 
 
-# ** Finalize
+# finalizando
 
 wflw_fit_xgboost_tuned <- wflw_spec_xgboost_tune %>%
     finalize_workflow(select_best(tune_results_xgboost, "rmse")) %>%
@@ -513,7 +576,7 @@ wflw_fit_xgboost_tuned <- wflw_spec_xgboost_tune %>%
 
 # * RANGER TUNE ----
 
-# ** Tunable Specification
+# especificação de tunagem
 
 model_spec_rf_tune <- rand_forest(
     mode    = "regression",
@@ -528,7 +591,7 @@ wflw_spec_rf_tune <- workflow() %>%
     add_model(model_spec_rf_tune) %>%
     add_recipe(recipe_spec %>% update_role(data_venda, new_role = "indicator"))
 
-# ** Tuning
+# tuning
 
 tic()
 set.seed(123)
@@ -540,11 +603,11 @@ tune_results_rf <- wflw_spec_rf_tune %>%
     )
 toc()
 
-# ** Results
+# resultados
 
 tune_results_rf %>% show_best("rmse", n = Inf)
 
-# ** Finalize
+# finalizando
 
 wflw_fit_rf_tuned <- wflw_spec_rf_tune %>%
     finalize_workflow(select_best(tune_results_rf, "rmse")) %>%
@@ -553,7 +616,7 @@ wflw_fit_rf_tuned <- wflw_spec_rf_tune %>%
 
 # * EARTH TUNE ----
 
-# ** Tunable Specification
+# especificação de tunagem
 
 model_spec_earth_tune <- mars(
     mode        = "regression",
@@ -566,7 +629,7 @@ wflw_spec_earth_tune <- workflow() %>%
     add_model(model_spec_earth_tune) %>%
     add_recipe(recipe_spec %>% update_role(data_venda, new_role = "indicator"))
 
-# ** Tuning
+# tuning
 
 tic()
 set.seed(123)
@@ -579,21 +642,21 @@ tune_results_earth <- wflw_spec_earth_tune %>%
 toc()
 
 
-# ** Results
+# resultados
 tune_results_earth %>% show_best("rmse")
 
 
-# ** Finalize
+# finalizando
 wflw_fit_earth_tuned <- wflw_spec_earth_tune %>%
     finalize_workflow(tune_results_earth %>% select_best("rmse")) %>%
     fit(train)
 
+```
 
+Nesse ponto, nós temos todos os modelos treinados e tunados e finalizados nos melhores parâmetros com os melhores RMSE.
 
-
-# 6.0 EVALUATE PANEL FORECASTS  -----
-
-# * Model Table ----
+```{r}
+# Model Table ----
 
 submodels_2_tbl <- modeltime_table(
     wflw_fit_xgboost_tuned,
@@ -606,18 +669,19 @@ submodels_2_tbl <- modeltime_table(
     combine_modeltime_tables(submodels_1_tbl)
 
 
-# * Calibration ----
+# Calibration ----
 calibration_tbl <- submodels_2_tbl %>%
     modeltime_calibrate(testing(splits))
 
-# * Accuracy ----
+# Accuracy ----
 calibration_tbl %>% 
     modeltime_accuracy() %>%
     arrange(rmse)
 
-# * Forecast Test ----
-
+# Forecast Test
+# retirando os modelos EARTH (baixa performance)
 calibration_tbl %>%
+  filter(!.model_desc %in% c("EARTH", "EARTH - Tuned")) %>% 
     modeltime_forecast(
         new_data    = testing(splits),
         actual_data = data_prepared_tbl,
@@ -629,9 +693,11 @@ calibration_tbl %>%
         .conf_interval_show = FALSE,
         .interactive        = TRUE
     )
+```
 
-# Ranger é nosso melhor modelo
+Pelo visto acima, nosso melhor modelo, considerando o rmse foi o RANGER (Randon Forest) padrão, sem ser o modelo tunado.
 
+```{r}
 calibration_tbl %>%
   filter(.model_id == 6) %>% 
   modeltime_forecast(
@@ -649,10 +715,15 @@ calibration_tbl %>%
 calibration_best_tbl <- calibration_tbl %>%
   filter(.model_id == 6)
 
+```
+
+A etapa de refit é importante para o workflow pois permite que o modelo seja retreinado utilizando todos os dados, e atualize caso identifique melhores parâmetros.
+
+```{r}
 refit_tbl <- calibration_best_tbl %>% 
   modeltime_refit(data_prepared_tbl)
 
-
+# Após o refit
 refit_tbl %>% 
   modeltime_forecast(new_data = future_tbl, 
                      actual_data = data_prepared_tbl,
@@ -660,38 +731,119 @@ refit_tbl %>%
   group_by(local_de_venda) %>% 
   plot_modeltime_forecast(.facet_ncol = 1)
 
+# Após converter os valores de volta para escala original
+refit_tbl %>% 
+  modeltime_forecast(new_data = future_tbl, 
+                     actual_data = data_prepared_tbl,
+                     keep_data = TRUE) %>% 
+  mutate(.value = exp(.value),
+         .conf_lo = exp(.conf_lo),
+         .conf_hi = exp(.conf_hi)) %>%
+  group_by(local_de_venda) %>% 
+  plot_modeltime_forecast()
+  
 
 ```
 
-Temos que back transform all data e finaliza
-
+Esse é o nosso forecast para os próximos 19 dias.
 
 
 ## 5 - Com base em qualquer modelo ou premissa, qual 'Local de Venda' você considera mais crítico e por quê?
 
-Acho q uma EDA das vendas com o período por local de venda pode responder.
-Fazer o forecast por local de venda pode ser interessante tbm
-
 ```{r}
-
+# vendas 
+gol_case1 %>% 
+  group_by(local_de_venda) %>% 
+  summarise(monetario_vendido_med = median(monetario_vendido),
+            monetario_vendido_mean = mean(monetario_vendido),
+            monetario_vendido_max = max(monetario_vendido),
+            monetario_vendido_min = min(monetario_vendido)) %>% 
+  arrange(desc(monetario_vendido_med))
 
 
 ```
 
-## 6 - Análise de correlação de vendas com outros parâmetros (PIB, Dólar, População etc)
+Para escolher qual local de venda focar, eu me basearia no quanto cada local vendeu no passado e qual a previsão (baseado na questão 4). O que vemos é que a menor média de venda até o momento atual do dataset é de Ellipsis e Mindscape, os dois também possuem as menores medianas. Porém, por Mindscape possuir uma mediana maior, significa que o mesmo constuma ter alguns picos de venda maiores que Ellipses (podendo ser visto no gráfico).
 
-Buscar indicadores sociais do período
+Como a projeção para os próximos 19 dias o mantem na mesma posição, eu focaria mais em Ellipsis.
 
-PIB
-Industria
-Desemprego
+## 6 - Criar modelo relacionando o comporatamento de venda com variaveis não apresentada nos dados (Ex : PIB, Dolar, e etc)
 
+Nessa questão eu criei um modelo de correlação, na tentativa de encontrar alguma feature correlacionada com as vendas. Foram testadas as seguintes features:
 
+- Indústria Nacional: retirado do IBGE
+- IPCA
+- SELIC
+- IBOVESPA
+- Taxa de desemprego
 
 ```{r}
+# indústria coletados do IBGE
+ind_industria <- tibble("2016/11/01" = -0.075,
+                        "2016/12/01" = -0.060,
+                        "2017/01/01" = -0.054,
+                        "2017/02/01" = -0.048,
+                        "2017/03/01" = -0.038) %>% 
+  pivot_longer(cols = everything(), names_to = "data_venda", values_to = "ind_industrial")
+
+# ipca
+IPCA <- rbcb::get_series(c(IPCA = 433),
+                         start_date = "2016-11-01",
+                         end_date = "2017-03-31",
+                         as = "tibble")
+
+# inadimplencia
+INADIMPLENCIA <- rbcb::get_series(c(INADIMPLENCIA = 21082),
+                        start_date = "2016-11-01",
+                        end_date = "2017-03-31",
+                        as = "tibble")
+# selic
+SELIC <- rbcb::get_series(c(SELIC = 1178),
+                          start_date = "2016-11-01",
+                          end_date = "2017-03-31",
+                          as = "tibble")
+
+# ibovespa
+IBOVESPA <- rbcb::get_series(c(IBOVESPA = 7),
+                             start_date = "2016-11-01",
+                             end_date = "2017-03-31",
+                             as = "tibble")
+
+# desemprego
+DESEMPREGO <- BETS::BETSget(code = 24369,
+                            from = "2016-11-01",
+                            to = "2017-03-31",
+                            data.frame = T) %>% tibble()
 
 
+# new features
+gol_case1_correlation_indicators <- gol_case1 %>%
+  left_join(ind_industria %>% mutate(data_venda = as.Date(data_venda)), by = c("data_venda" = "data_venda")) %>%
+  left_join(IPCA, by = c("data_venda" = "date")) %>% 
+  left_join(INADIMPLENCIA, by = c("data_venda" = "date")) %>% 
+  left_join(SELIC, by = c("data_venda" = "date")) %>% 
+  left_join(IBOVESPA, by = c("data_venda" = "date")) %>% 
+  left_join(DESEMPREGO, by = c("data_venda" = "date")) %>% 
+  fill(ind_industrial, .direction = "down") %>%
+  fill(IPCA, .direction = "down") %>% 
+  fill(INADIMPLENCIA, .direction = "down") %>% 
+  fill(value, .direction = "down") %>% 
+  rename(DESEMPREGO = value) %>% 
+  select(monetario_vendido, ind_industrial:DESEMPREGO)
+
+library(corrr)
+
+gol_case1_correlation_indicators %>% 
+    correlate(use = "pairwise.complete.obs") %>% 
+    rearrange(method = "PCA") %>% 
+    shave() %>%
+    # rplot need to receive a correlation matrix
+    rplot(shape = 15, colours = c("darkorange", "white", "darkcyan")) +
+    theme_minimal() +
+    theme(
+        axis.text.x = element_text(angle = 45, hjust = 1)
+    )
 
 ```
 
-
+Infelizmente não foi encontrado nenhuma correlação entre o vendido com indicadores socioeconômicos selecionados para a análise.
