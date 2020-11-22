@@ -396,7 +396,7 @@ splits %>%
 
 Criação das receitas.
 
-```{r}
+```{r recipe_chunck}
 set.seed(123)
 train <- training(splits) 
 

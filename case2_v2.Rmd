@@ -162,7 +162,7 @@ Os missing values em um dataset nem sempre representam falta de informação, pe
 
 Para isso utilizo a lib `naniar` que possui algumas visualizações interessantes.
 
-```{r}
+```{r missing_data_chunck}
 # heatmap de missing values
 # antes de plotar fiz um filtro para olhar apenas paras as 5000 primeiras linhas
 g <- anac_2020_10_cleaned_tbl %>% 
