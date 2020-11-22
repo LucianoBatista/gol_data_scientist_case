@@ -1,0 +1,339 @@
+---
+title: "case2_v2"
+output: html_document
+---
+
+# Libs
+
+Abaixo você encontra os pacotes utilizados no case 2.
+
+```{r}
+library(tidyverse)
+library(lubridate)
+library(skimr)
+library(ggsci)
+library(janitor)
+library(naniar)
+library(lubridate)
+library(ggalluvial)
+
+# time series
+library(timetk)
+library(modeltime)
+```
+
+# Dados
+
+Como informado na descrição do case que o candidato estaria livre para escolher o dataset de acordo com o site da [ANAC](https://www.anac.gov.br/assuntos/setor-regulado/empresas/envio-de-informacoes/microdados), resolvi adotar a estratégia descrita abaixo:
+
+- gerar uma Análise Exploratória de Dados (EDA) considerando o último mês disponível (Outubro). 
+- coletar todos os dados de todos os anos para visualizar o histórico de passagens desde 2000 disponíveis nos registros da ANAC.
+- dividir a EDA em duas partes, uma para cada dataset.
+
+O script responsável pela ETL dos dados pode ser encontrado com o nome `reading_all_base.Rmd`. Ao final desse script foi retornado um csv que é um compilado da soma de duas variáveis (`nr_nr_passag_gratis` + `nr_passag_pagos`) para cada mês em todo o período. 
+
+```{r}
+# dataset ANAC 2020/10
+anac_2020_10 <- read_delim("dados/combinada2020-10.txt", 
+                           delim = ";", 
+                           # encode responsável por manter acentos e outros caracteres especiais
+                           locale = locale(encoding = "ISO-8859-1"))
+
+# dataset ANAC todos os anos, nr_nr_passag_gratis` + `nr_passag_pagos.
+anac_full_pass_tbl <- read_csv("dados/anac_full_final_tbl.csv") %>% 
+  mutate(total_pass = case_when(is.na(total_pass) ~ 0,
+                                TRUE ~ total_pass)) %>% 
+  drop_na()
+
+```
+
+Antes de continuar, um breve esclarecimento do pré-processamento feito no dataset `anac_full_pass_tbl`. Como eu já tive conhecimento de algumas características desses dados, optei por fazer algumas transformações antes de começar a utilizá-lo:
+- *tratamento de valores missing como 0:* tais valores são oriundos de períodos sem venda de passagens.
+- *drop de valores missing:* ao longo dos anos, alguns meses na base da ANAC não foram registrados, por isso optou-se em excluí-los com o `drop_na()`.
+
+
+# Dicionário de dados
+
+Uma prática comum minha, sempre que estou trabalhando com uma base de dados desconhecida, é registrar um dicionário de dados antes de qualquer coisa. Como temos 90 features diferentes, fiz uma prévia seleção do que seria mais interessante de analisar nesse primeiro momento, resultando em 45 features. 
+
+- Datas: datas de registro do voo, data de partida e data de chegada.
+- Tempos: horas das partidas e chegadas
+- Dados sobre a empresa de aviação
+- Dados relacionados ao HOTRAN
+- Dados da linha do voo (Doméstica cargueira, mista, internacional cargueira, internacional mista, não identificada)
+- Dados sobre o aeródromo
+- Dados sobre o local de origem e destino do voo
+- Dados das passagens
+- Por fim, dados relacionados ao peso de carga de cada voo
+
+
+# EDA Parte 1
+
+Vamos selecionar aqui as features para trabalhar durante a primeira parte da EDA.
+
+```{r}
+
+anac_2020_10_cleaned_tbl <- anac_2020_10 %>% # ----------------------------------------------------------------------------
+  select(sg_empresa_icao, 
+         nm_empresa, 
+         nm_pais, 
+         ds_tipo_empresa, 
+         id_di, 
+         cd_di, 
+         ds_di, 
+         ds_grupo_di, 
+         dt_referencia,
+         id_tipo_linha, 
+         cd_tipo_linha, 
+         ds_tipo_linha, 
+         ds_natureza_tipo_linha, 
+         ds_servico_tipo_linha, 
+         hr_partida_real,
+         dt_partida_real, 
+         sg_icao_origem,
+         nm_pais_origem,
+         nm_pais_destino,
+         nm_aerodromo_origem, 
+         nm_municipio_origem, 
+         sg_uf_origem,
+         nm_regiao_origem, 
+         nm_continente_origem, 
+         hr_chegada_real, 
+         dt_chegada_real, 
+         nr_passag_pagos, 
+         nr_passag_gratis, 
+         starts_with("kg"), 
+         nm_aerodromo_destino, 
+         sg_icao_destino, 
+         sg_uf_destino,
+         nm_continente_destino, 
+         nm_pais, 
+         nm_regiao_destino, 
+         sg_icao_destino) %>% 
+  relocate(where(is.Date), 
+           where(is.difftime),
+           nm_empresa, 
+           sg_empresa_icao, 
+           nm_pais,
+           ds_tipo_empresa,
+           ends_with("di"), 
+           ends_with("linha"), 
+           nm_aerodromo_origem, 
+           sg_icao_origem,
+           nm_continente_origem, 
+           nm_pais, 
+           nm_regiao_origem,
+           sg_uf_origem,
+           sg_icao_origem,  
+           nm_aerodromo_destino, 
+           sg_icao_destino, 
+           nm_continente_destino, 
+           nm_pais, 
+           nm_regiao_destino, 
+           sg_uf_destino,
+           sg_icao_destino, 
+           nr_passag_pagos,
+           nr_passag_gratis) 
+# ----------------------------------------------------------------------------------------
+
+```
+
+## Overview
+
+Com o dataset em mãos, acho super importante visualizar um resumo geral de como está a saúde dos nossos dados, e para isso nada melhor que a função `skim()` do pacote `skimr`.
+
+```{r}
+skim(anac_2020_10_cleaned_tbl)
+
+```
+
+O que podemos extrair desses resultados:
+
+- dimensão do dataset: pouco mais de 93k de linhas e 38 features diferentes.
+- alta presenção de features do tipo caracter (24), tendo ainda 9 numéricas, 3 datas e 2 difftime (horas).
+- presença de missing values em algumas features (total de 12)
+- nas variáveis do tipo caractér, algumas possuem alta cardinalidade (174 no máximo)
+- nosso período aqui corresponde ao intervalo do mês de Outubro inteiro (`dt_referencia`)
+- nossas variáveis numéricas estão com uma forte skewnes positiva. Algumas aparentam ter outliers distorcendo a média, mas será verificado mais a frente.
+
+## Visualizando os missings
+
+Os missing values em um dataset nem sempre representam falta de informação, pelo contrário, podem carregar informações valiosas. Por isso, vamos agora investigá-los.
+
+Para isso utilizo a lib `naniar` que possui algumas visualizações interessantes.
+
+```{r}
+# heatmap de missing values
+# antes de plotar fiz um filtro para olhar apenas paras as 5000 primeiras linhas
+anac_2020_10_cleaned_tbl %>% 
+  dplyr::slice(1:5000) %>% 
+  vis_miss(warn_large_data = F)
+
+```
+
+Como nosso objetivo aqui é observar relações entre os missing values, é suficiente olhar apenas para as 5 mil primeiras linhas. Como visto na imagem, podemos apontar as seguintes observações:
+
+1. `nm_regiao_origem`, `nm_regiao_destino`, `sg_uf_origem` e `sg_uf_destino`: estão correlacionadas
+1. `nr_passag_pagos`, `nr_passag_gratis` e todas as features relacionadas a carga e bagagem: também estão correlacionadas.
+
+A primeira situação acontece por que nos registros da ANAC não possui informações sobre região (UF) quando o voo vem de outro país ou é destinado à outro país. E a segunda situação acontece por que quando não possui nenhum tipo de passageiro (pago ou grátis) não temos bagagem nenhuma voo.
+
+Podemos visualizar também de uma forma mais geral os missing values, pelo gráfico abaixo.
+
+```{r}
+# adicionar um geom label
+gg_miss_var(anac_2020_10_cleaned_tbl)
+
+```
+
+
+## Chegadas e Partidas
+
+Nesse mês de Outubro nós tivemos um total de 62 empresas transitando pelo espaço aéreo brasileiro. Sendo o top 3 muito superior aos demais:
+
+- GOL
+- TAM
+- AZUL
+
+```{r}
+anac_2020_10_cleaned_tbl %>% 
+  count(nm_empresa, nm_pais) %>% 
+  slice_max(order_by = n, n = 3) %>% 
+  ggplot(aes(x = n,
+             y = nm_empresa)) +
+  geom_col()
+
+
+
+```
+
+
+Vamos dar um zoom no top 3 e identificar os tipos de voos que foram realizados
+
+```{r}
+# gol
+anac_2020_10_cleaned_tbl %>% 
+  filter(nm_empresa == "GOL LINHAS AÉREAS S.A. (EX- VRG LINHAS AÉREAS S.A.)") %>% 
+  select(nm_empresa, ds_di) %>% 
+  count(ds_di, sort = T)
+
+anac_2020_10_cleaned_tbl %>% 
+  filter(nm_empresa == "TAM LINHAS AÉREAS S.A.") %>% 
+  select(nm_empresa, ds_di) %>% 
+  count(ds_di, sort = T)
+
+anac_2020_10_cleaned_tbl %>% 
+  filter(nm_empresa == "AZUL LINHAS AÉREAS BRASILEIRAS S/A") %>% 
+  select(nm_empresa, ds_di) %>% 
+  count(ds_di, sort = T)
+
+anac_2020_10_cleaned_tbl %>%
+  filter(nm_empresa %in% c("GOL LINHAS AÉREAS S.A. (EX- VRG LINHAS AÉREAS S.A.)", 
+                           "TAM LINHAS AÉREAS S.A.",
+                           "AZUL LINHAS AÉREAS BRASILEIRAS S/A")) %>% 
+  count(ds_di, nm_empresa) %>% 
+  ggplot(aes(x = n,
+             y = ds_di)) +
+  geom_col() +
+  facet_wrap(~nm_empresa, scales = "free_x")
+
+```
+
+
+Horário de Transporte ou HOTRAN, que é o documento que formaliza as concessões para a exploração de linhas aéreas regulares internacionais e domésticas de passageiros e/ou carga e da Rede Postal pelas empresas de transporte aéreo, com os respectivos números de vôos, freqüências, tipos de aeronaves e oferta de assentos. Esse documento é enviado ao DAC e, em caso de aprovação, dá o direito da empresa aérea operar as linhas de forma regular. 
+
+No plot acima vimos que a TAM é a única empresa do top 3 que não teve vôos extras sem HOTRAN, esse pode ser um quesito que a empresa precise averiguar para um possível aumento no número de vôos, tal quantia poderia ser suficiente para superar a GOL no ranking de vôos no mês de Outubro.
+
+## locations
+
+```{r}
+anac_2020_10_cleaned_tbl %>% 
+  select(nm_empresa, nm_pais_origem, nm_pais_destino, dt_partida_real, dt_chegada_real, sg_uf_destino) %>%
+  filter(nm_empresa %in% c("GOL LINHAS AÉREAS S.A. (EX- VRG LINHAS AÉREAS S.A.)", 
+                           "TAM LINHAS AÉREAS S.A.",
+                           "AZUL LINHAS AÉREAS BRASILEIRAS S/A")) %>%
+  count(nm_pais_origem, sg_uf_destino, nm_empresa) %>% 
+  mutate(prop = n / sum(n)) %>% 
+  ggplot(aes(axis1 = nm_empresa,
+             axis2 = sg_uf_destino,
+             y = prop)) +
+  geom_alluvium(aes(fill = nm_empresa)) +
+  geom_stratum() +
+  geom_text(stat = "stratum", aes(label = after_stat(stratum))) +
+  scale_x_discrete(limits = c("origem", "destino"),
+                   expand = c(.1, .1))
+  
+
+```
+
+
+No cenário nacional podemos utilizar esse plot de Sankey para visualizar quais são os destinos mas utilizados pelo top 3 de empresas de aviação.
+
+
+```{r}
+anac_2020_10_cleaned_tbl %>% 
+  select(nm_empresa, nm_pais_origem, nm_pais_destino, dt_partida_real, dt_chegada_real, sg_uf_destino) %>%
+  filter(nm_empresa %in% c("GOL LINHAS AÉREAS S.A. (EX- VRG LINHAS AÉREAS S.A.)", 
+                           "TAM LINHAS AÉREAS S.A.",
+                           "AZUL LINHAS AÉREAS BRASILEIRAS S/A")) %>%
+  count(nm_pais_origem, nm_pais_destino, nm_empresa) %>% 
+  filter(nm_pais_destino != "BRASIL") %>% 
+  mutate(prop = n / sum(n)) %>% 
+  ggplot(aes(axis1 = nm_empresa,
+             axis2 = nm_pais_destino,
+             y = prop)) +
+  geom_alluvium(aes(fill = nm_empresa)) +
+  geom_stratum() +
+  geom_text(stat = "stratum", aes(label = after_stat(stratum))) +
+  scale_x_discrete(limits = c("origem", "destino"),
+                   expand = c(.1, .1))
+
+
+```
+
+
+Quando olhamos o cenário internacional, vemos um grande domínio da TAM com viagens para ......
+
+Claramente é um ponto onde a GOL pode melhorar
+
+## Timeseries passagens outubro
+
+```{r}
+anac_2020_10_cleaned_tbl %>% 
+  mutate(total_pass = nr_passag_gratis + nr_passag_pagos) %>% 
+  filter(nm_empresa %in% c("GOL LINHAS AÉREAS S.A. (EX- VRG LINHAS AÉREAS S.A.)", 
+                           "TAM LINHAS AÉREAS S.A.",
+                           "AZUL LINHAS AÉREAS BRASILEIRAS S/A")) %>% 
+  group_by(dt_referencia, nm_empresa) %>% 
+  summarise(total_pass = sum(total_pass)) %>% 
+  ungroup() %>% 
+  plot_time_series(.date_var = dt_referencia, .value = total_pass, .color_var = nm_empresa, .facet_vars = nm_empresa, .smooth = F)
+  
+```
+
+Aqui vemos que a no gráfico mensal, diferentes empresas apresentam uma sazonalidade diferente, sendo todas diferente.
+
+[explicar cada padrão]
+
+
+
+## Kilogramas de bagagem
+
+relacionar com aeródromo e o top 3
+
+TODO
+
+HISTOGRAMS AND BOXPLOTS
+
+
+
+
+
+
+# Time series passageiros
+
+```{r}
+anac_full_pass_tbl %>% 
+  plot_time_series(.date_var = dt_referencia, .value = total_pass)
+```
+
