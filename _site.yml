@@ -1,7 +1,7 @@
 name: "gol_data_scientist_case"
 output_dir: "docs"
 navbar:
-  title: "testing"
+  title: "Home"
 left:
   - text: "Home"
 href: index.html
