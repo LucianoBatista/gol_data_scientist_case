@@ -270,7 +270,8 @@ Utilizarei o algorítimo desenvolvido pelo Rob J Hyndman (`auto_arima()`), que b
 Todas as etapas de modelagem serão feitas seguindo a filosofia do `tidymodels` e sua extensão para séries temporais o `modeltime`.
 
 O `modeltime` tem por objetivo organizar e otimizar o workflow de modelagem de séries temporais, como pode ser visto na imagem abaixo.
-[imagem]
+
+![workflow](dados/modeltime_workflow.jpg)
 
 ```{r}
 # Arena
