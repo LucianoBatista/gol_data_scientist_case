@@ -383,7 +383,7 @@ future_tbl <- full_data_gol_case1_tbl %>%
 
 Splits em treino e teste, com 40 dias para teste e o resto para treino.
 
-```{r}
+```{r splits_chunck}
 splits <- data_prepared_tbl %>%
     time_series_split(data_venda, assess = 40, cumulative = TRUE)
 
@@ -438,7 +438,7 @@ Vamos agora aos modelos! Aqui eu optei por cinco modelos diferentes:
 
 O procedimento aqui vai ser a criação dos modelos com os parâmetros default e depois utilizaremos a otimização.
 
-```{r}
+```{r model_chunck}
 
 # * XGBOOST ----
 

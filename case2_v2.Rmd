@@ -271,7 +271,7 @@ anac_2020_10_cleaned_tbl %>%
 No cenário nacional podemos utilizar esse plot de Sankey para visualizar quais são os destinos mas utilizados pelo top 3 de empresas de aviação.
 
 
-```{r}
+```{r chunk_passagens_out}
 anac_2020_10_cleaned_tbl %>% 
   select(nm_empresa, nm_pais_origem, nm_pais_destino, dt_partida_real, dt_chegada_real, sg_uf_destino) %>%
   filter(nm_empresa %in% c("GOL LINHAS AÉREAS S.A. (EX- VRG LINHAS AÉREAS S.A.)", 
