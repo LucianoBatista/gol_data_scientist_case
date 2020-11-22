@@ -2,9 +2,11 @@ name: "gol_data_scientist_case"
 output_dir: "docs"
 navbar:
   title: "Home"
-left:
+  left:
   - text: "Home"
-href: index.html
+    href: index.html
+  - text: "testing"
+    href: testing.html
 output:
   html_document:
     theme: flatly
