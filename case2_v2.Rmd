@@ -165,10 +165,11 @@ Para isso utilizo a lib `naniar` que possui algumas visualizações interessante
 ```{r}
 # heatmap de missing values
 # antes de plotar fiz um filtro para olhar apenas paras as 5000 primeiras linhas
-anac_2020_10_cleaned_tbl %>% 
+g <- anac_2020_10_cleaned_tbl %>% 
   dplyr::slice(1:5000) %>% 
   vis_miss(warn_large_data = F)
 
+g
 ```
 
 Como nosso objetivo aqui é observar relações entre os missing values, é suficiente olhar apenas para as 5 mil primeiras linhas. Como visto na imagem, podemos apontar as seguintes observações:
