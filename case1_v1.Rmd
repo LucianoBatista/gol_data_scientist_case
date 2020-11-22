@@ -1,0 +1,697 @@
+---
+title: "Case1"
+---
+
+# Libs
+
+```{r}
+library(tidyverse)
+library(xlsx)
+library(janitor)
+library(lubridate)
+
+# time series
+library(timetk)
+library(modeltime)
+library(tidymodels)
+```
+
+
+# Dados
+
+```{r}
+gol_case1 <- read.xlsx("dados/case_analytics-ds.xlsx", sheetIndex = 2) %>% tibble() %>% clean_names()
+
+```
+
+Data indo de 2016-11-01 até 2017-04-01.
+
+# Problemas
+
+## 1 - Ranking para o número total de PAX por dia da semana
+
+PAX = total de passageiros
+
+```{r}
+gol_case1 %>% 
+  mutate(wday = wday(data_venda, label = TRUE, abbr = FALSE)) %>% 
+  group_by(wday) %>% 
+  summarise(pax_total_wday = sum(pax)) %>% 
+  arrange(desc(pax_total_wday))
+  
+
+# colocar a mesma análise por períodos: mensal e anual
+
+```
+
+## 2 - Qual a correlação de sábado e domingo somados com o total de RPK?
+
+RPK = um indicador relacionado ao PAX
+
+Correlação entre sábado e domingo provavelmente estão querendo um ACF ou PACF plot
+
+Voltar aqui depois, acredito que ela quer uma correlação com um one hot com colunas como dias da semana.
+
+```{r}
+# ajustando a série
+gol_case1 %>% 
+  summarise_by_time(.date_var = data_venda, by = "day", rpk_total = sum(rpk)) %>% 
+  select(-by) %>% 
+  plot_acf_diagnostics(.date_var = data_venda, .value = rpk_total)
+  
+gol_case1 %>% 
+  summarise_by_time(.date_var = data_venda, by = "day", rpk_total = sum(rpk)) %>%
+  mutate(wday = wday(data_venda)) %>% 
+  mutate(lag1 = lag_vec(wday, lag = 1),
+         acf = acf(rpk_total, lag.max = 1, plot = F),
+         # sábado é 7, domingo é 1
+         names  = wday(data_venda, label = TRUE)) %>% View()
+
+gol_case1 %>% 
+  summarise_by_time(.date_var = data_venda, by = "day", rpk_total = sum(rpk)) %>% 
+  select(-by) %>% 
+  plot_time_series(.date_var = data_venda, .value = rpk_total, .smooth = FALSE)
+
+
+
+
+```
+
+## 3 - Qual a média de Monetário por mês por Canal? E a mediana?
+
+```{r}
+gol_case1 %>% 
+  mutate(year = year(data_venda),
+         month = month(data_venda, label = TRUE, abbr = F)) %>% 
+  group_by(year, month) %>% 
+  summarise(mean = mean(monetario_vendido),
+            median = median(monetario_vendido))
+
+
+```
+
+## 4 - Forecasting para os próximos 15 dias do PAX por local de venda
+
+Vamos visualizar primeiramente o que temos de séries temporais para realizar as predições.
+
+```{r}
+# timeseries do problema
+ts_gol_case1_tbl <- gol_case1 %>% 
+  group_by(data_venda, local_de_venda) %>% 
+  summarise(total_pax = sum(pax)) %>% 
+  ungroup()
+
+# visualizando
+ts_gol_case1_tbl %>% 
+  plot_time_series(.date_var = data_venda, 
+                   .value = log(total_pax), 
+                   .color_var = local_de_venda, 
+                   .facet_var = local_de_venda,
+                   .smooth = F)
+
+```
+
+O que temos aqui são 4 séries temporais com período diário, isso nos dá 152 dias para cada série (pouca informação). Além disso, as séries são bastante semelhantes, praticamente em todo o período observamos picos e vales no mesmo dia.
+
+Vamos ver então como está a sazonalidade das 4 séries:
+
+```{r}
+# sazonalidade
+ts_gol_case1_tbl %>% 
+  group_by(local_de_venda) %>% 
+  plot_seasonal_diagnostics(data_venda, log(total_pax), .interactive = F)
+
+
+```
+
+Duas sazonalidades chamam atenção nos nossos dados: dias da semana e semanas do ano. 
+
+O que vemos é que toda segunda e terça ocorre uma queda no PAX atingindo um pico nas quartas-feiras.
+
+E em relação as semanas do ano, vemos que ocorre picos no valor do PAX toda semana 2, 6, 46 e 50 do ano, e os maiores vales nas semanas 3, 7 e 44.
+
+Também é super importante visualizarmos as auto-correlações das séries temporais.
+
+```{r}
+# auto correlação
+ts_gol_case1_tbl %>% 
+  filter(local_de_venda == "Arena") %>% 
+  plot_acf_diagnostics(data_venda, log(total_pax), .show_white_noise_bars = T, .interactive = F)
+
+ts_gol_case1_tbl %>% 
+  filter(local_de_venda == "Ellipsis") %>% 
+  plot_acf_diagnostics(data_venda, log(total_pax), .show_white_noise_bars = T, .interactive = F)
+
+ts_gol_case1_tbl %>% 
+  filter(local_de_venda == "Mindscape") %>% 
+  plot_acf_diagnostics(data_venda, log(total_pax), .show_white_noise_bars = T, .interactive = F)
+
+ts_gol_case1_tbl %>% 
+  filter(local_de_venda == "Vast") %>% 
+  plot_acf_diagnostics(data_venda, log(total_pax), .show_white_noise_bars = T, .interactive = F)
+
+
+```
+
+
+Em todos os ACF/PACF plots nós visualizamos que existe uma autocorrelação mensal e que a mesma vai diminuindo ao longo do tempo. Nesse momento vale uma observação, ao observar essa correlção, nós poderíamos utilizar tais lags como preditores, porém existe uma perda que precisa ser levada em consideração em relação pois teríamos que sacrificar uma parte dos dados para isso. 
+
+Tendo visto esses aspectos dos nossos dados, eu vou prosseguir o forecasting por duas abordagens:
+
+1. utilizando algorítimos da família ARIMA
+2. utilizando modelos de ML
+
+### 4.1 Modelo ARIMA
+
+Estarei utilizando o algorítimo desenvolvido pelo Rob J Hyndman (`auto_arima()`), que busca de forma iterativa pelos melhores parâmetros para p, q d, P, Q e D de acordo com a métrica AIC. Vamos primeiro visualizar para o local de venda *Arena*.
+
+Todas as etapas de modelagem serão feitas seguindo a filosofia do `tidymodels` e sua extensão para séries temporais o `modeltime`.
+
+```{r}
+# Arena
+# transformação box-cox
+ts_box_cox_gol_case1_tbl <- ts_gol_case1_tbl %>% 
+  filter(local_de_venda == "Arena") %>% 
+  select(-local_de_venda) %>% 
+  mutate(total_pax = box_cox_vec(total_pax))
+boxcox_soybean_lambda <- -0.338402149659834
+
+gol_case1_splits <- time_series_split(ts_box_cox_gol_case1_tbl, assess = "40 days", cumulative = TRUE)
+train_gol_case1_boxcox_tbl <- training(gol_case1_splits)
+test_gol_case1_boxcox_tbl <- testing(gol_case1_splits)
+
+gol_case1_splits %>% 
+  tk_time_series_cv_plan() %>% 
+  plot_time_series_cv_plan(data_venda, total_pax, .interactive = F) +
+  labs(
+    title = "Soybean Training and Testing Splits",
+    y = "BoxCox transformed values"
+  )
+
+# modelo
+# adicionei duas features para ajudar a captar a sazonalidade do modelo
+auto_arima_formula <- formula(total_pax ~ . +
+                                week(data_venda) +
+                                year(data_venda) +
+                                wday(data_venda) +
+                                month(data_venda))
+
+# training
+auto_arima_boxcox_fit <- arima_reg() %>% 
+  # auto arima aqui pucha o auto_arima() do pacote forecast para utilizar nesse workflow
+  set_engine("auto_arima") %>% 
+  fit(auto_arima_formula, train_gol_case1_boxcox_tbl)
+
+# testing
+calibration_boxcox_tbl <- modeltime_table(
+  auto_arima_boxcox_fit
+) %>% 
+  modeltime_calibrate(
+    new_data = test_gol_case1_boxcox_tbl)
+
+# accuracy on testing data
+gol_case1_boxcox_accuracy <- calibration_boxcox_tbl %>% 
+  modeltime_accuracy()
+
+# visualizando acurácia nos dados de teste
+calibration_boxcox_tbl %>% 
+  modeltime_forecast(new_data = test_gol_case1_boxcox_tbl,
+                     actual_data = ts_box_cox_gol_case1_tbl) %>% 
+  plot_modeltime_forecast(.interactive = F) +
+  labs(
+    title = "Soybean - Model Performance on Assessment Data",
+    y = "BoxCox transformed values",
+    caption = "linkedin.com/in/lucianobatistads/"
+    
+  )
+```
+
+O que vemos é que é bem difícil do modelo capturar uma boa variabilidade da série, mesmo adicionando algumas features. Vamos visualizar como ficaram os resíduos.
+
+```{r}
+# vizualing residuals
+calibration_boxcox_tbl %>% 
+  modeltime_residuals() %>%
+  plot_modeltime_residuals(.type = c("acf"), .show_white_noise_bars = T)
+
+```
+
+Aqui nós vemos que utilizar o `auto_arima()` não foi prejudicial no sentido de não reduzir autocorrelação, variabilidade ou de não obter erros próximos a uma distribuição normal.
+
+Vamos seguir com as predições
+
+```{r}
+refit_boxcox_tbl <- calibration_boxcox_tbl %>% 
+  modeltime_refit(data = ts_box_cox_gol_case1_tbl) 
+
+refit_boxcox_tbl %>% 
+  modeltime_forecast(h = "19 days", actual_data = ts_box_cox_gol_case1_tbl) %>% 
+  plot_modeltime_forecast(.interactive = F) +
+  labs(
+    title = "Soybean - Demand Forecast",
+    subtitle = "Prediction for the next 3 years of Soybean Exports",
+    y = "BoxCox transformed values",
+    caption = "linkedin.com/in/lucianobatistads/"
+  )
+
+refit_boxcox_tbl %>% 
+  modeltime_accuracy()
+
+forecast_boxcox_gol_case1_tbl <- calibration_boxcox_tbl %>% 
+  modeltime_forecast(h = "19 days", actual_data = ts_box_cox_gol_case1_tbl)
+
+forecast_gol_case1_tbl <- forecast_boxcox_gol_case1_tbl %>% 
+  mutate(.value = box_cox_inv_vec(.value, lambda = boxcox_soybean_lambda),
+         .conf_lo = box_cox_inv_vec(.conf_lo, lambda = boxcox_soybean_lambda),
+         .conf_hi = box_cox_inv_vec(.conf_hi, lambda = boxcox_soybean_lambda))
+
+forecast_gol_case1_tbl %>% 
+  plot_modeltime_forecast(.interactive = F) +
+  scale_y_continuous(labels = scales::number_format(scale = 1e-6, suffix = "M")) +
+  labs(
+    title = "Soybean - Demand Forecast",
+    subtitle = "Prediction for the next 3 years of Soybean Exports",
+    y = "Millions of Tons",
+    caption = "linkedin.com/in/lucianobatistads/"
+  )
+
+```
+
+No final, nós vemos que ocorrerá um pico de passageiros no dia X. 
+
+Esse pico provavelmente será bem maior, mas a dimensão é governada por alguma features externa, essa poderia ser adicionada ao modelo futuramente.
+
+
+
+### 4.2 Procedimento utilizando modelos de ML com tunning e resampling
+
+
+
+```{r}
+# utilizando painéis
+full_data_gol_case1_tbl <- ts_gol_case1_tbl %>%
+  mutate(total_pax = log(total_pax)) %>% 
+  # Global Features / Transformations / Joins
+  #mutate(pageViews = log1p(pageViews)) %>%
+  # Group-Wise Feature Transformations
+  group_by(local_de_venda) %>%
+  # próximos 19 dias de forecast
+  future_frame(data_venda, .length_out = 19, .bind_data = TRUE) %>%
+  ungroup() %>%
+  
+  # Lags & Rolling Features / Fourier
+  mutate(local_de_venda = as_factor(local_de_venda)) %>%
+  group_by(local_de_venda) %>%
+  group_split() %>%
+  # features
+  map(.f = function(df) {
+    df %>%
+      arrange(data_venda) %>%
+      tk_augment_lags(total_pax, .lags = 28) #%>%
+      # tk_augment_slidify(
+      #   pageViews_lag28,
+      #   .f       = ~ mean(.x, na.rm = TRUE),
+      #   .period  = c(7, 28, 28*2),
+      #   .partial = TRUE, 
+      #   .align   = "center"
+      #)
+  }) %>%
+  bind_rows() %>%
+  
+  rowid_to_column(var = "rowid")
+
+
+```
+
+Preparo do dado que será utilizado no forecast
+
+```{r}
+data_prepared_tbl <- full_data_gol_case1_tbl %>%
+    filter(!is.na(total_pax)) %>%
+    drop_na()
+
+data_prepared_tbl
+
+```
+
+Future tbl
+
+```{r}
+future_tbl <- full_data_gol_case1_tbl %>%
+    filter(is.na(total_pax))
+
+```
+
+```{r}
+# 2.0 TIME SPLIT ----
+
+splits <- data_prepared_tbl %>%
+    time_series_split(data_venda, assess = 40, cumulative = TRUE)
+
+splits %>%
+    tk_time_series_cv_plan() %>%
+    plot_time_series_cv_plan(data_venda, total_pax)
+
+
+```
+
+```{r}
+library(tidymodels)
+# resampling
+set.seed(123)
+train <- training(splits) 
+
+train %>% 
+  group_by(local_de_venda) %>% 
+  plot_time_series(data_venda, total_pax, .smooth = F)
+
+# 3.0 RECIPE ----
+
+# * Clean Training Set ----
+# - With Panel Data, need to do this outside of a recipe
+# - Transformation happens by group
+
+# * Recipe Specification ----
+
+recipe_spec <- recipe(total_pax ~ ., data = train) %>%
+  update_role(rowid, new_role = "indicator") %>%
+  step_timeseries_signature(data_venda) %>%
+  step_rm(matches("(.xts$)|(.iso$)|(hour)|(minute)|(second)|(am.pm)")) %>%
+  step_normalize(data_venda_index.num, data_venda_year) %>%
+  step_zv(all_predictors()) %>% 
+  step_dummy(all_nominal(), one_hot = TRUE)
+
+recipe_spec %>% prep() %>% juice() %>% glimpse()
+
+# 4.0 MODELS ----
+# - !!! REMINDER: Cannot use sequential models !!!
+
+# * XGBOOST ----
+
+wflw_fit_xgboost <- workflow() %>%
+    add_model(
+        spec = boost_tree(mode = "regression") %>% set_engine("xgboost")
+    ) %>%
+    add_recipe(recipe_spec %>% update_role(data_venda, new_role = "indicator")) %>%
+    fit(train)
+
+
+# * SVM ----
+
+wflw_fit_svm <- workflow() %>%
+    add_model(
+        spec = svm_rbf(mode = "regression") %>% set_engine("kernlab")
+    ) %>%
+    add_recipe(recipe_spec %>% update_role(data_venda, new_role = "indicator")) %>%
+    fit(train)
+
+
+
+# * RANDOM FOREST ----
+
+wflw_fit_rf <- workflow() %>%
+    add_model(
+        spec = rand_forest(mode = "regression") %>% set_engine("ranger")
+    ) %>%
+    add_recipe(recipe_spec %>% update_role(data_venda, new_role = "indicator")) %>%
+    fit(train)
+
+# * NNET ----
+
+wflw_fit_nnet <- workflow() %>%
+    add_model(
+        spec = mlp(mode = "regression") %>% set_engine("nnet")
+    ) %>%
+    add_recipe(recipe_spec %>% update_role(data_venda, new_role = "indicator")) %>%
+    fit(train)
+
+# * MARS ----
+
+wflw_fit_mars <- workflow() %>%
+    add_model(
+        spec = mars(mode = "regression") %>% set_engine("earth")
+    ) %>%
+    add_recipe(recipe_spec %>% update_role(data_venda, new_role = "indicator")) %>%
+    fit(train)
+
+
+# * ACCURACY CHECK ----
+
+submodels_1_tbl <- modeltime_table(
+    wflw_fit_xgboost,
+    wflw_fit_svm,
+    wflw_fit_rf,
+    wflw_fit_nnet,
+    wflw_fit_mars
+)
+
+submodels_1_tbl %>%
+    modeltime_accuracy(testing(splits)) %>%
+    arrange(rmse)
+
+
+# 5.0 HYPER PARAMETER TUNING ---- 
+
+# * RESAMPLES - K-FOLD ----- 
+
+set.seed(123)
+resamples_kfold <- train %>% vfold_cv(v = 5)
+
+resamples_kfold %>%
+    tk_time_series_cv_plan() %>%
+    plot_time_series_cv_plan(data_venda, total_pax, .facet_ncol = 2)
+
+
+# * XGBOOST TUNE ----
+library(tictoc)
+# ** Tunable Specification
+
+model_spec_xgboost_tune <- boost_tree(
+    mode            = "regression", 
+    mtry            = tune(),
+    trees           = tune(),
+    min_n           = tune(),
+    tree_depth      = tune(),
+    learn_rate      = tune(),
+    loss_reduction  = tune()
+) %>% 
+    set_engine("xgboost")
+
+wflw_spec_xgboost_tune <- workflow() %>%
+    add_model(model_spec_xgboost_tune) %>%
+    add_recipe(recipe_spec %>% update_role(data_venda, new_role = "indicator"))
+
+# ** Tuning
+
+tic()
+set.seed(123)
+tune_results_xgboost <- wflw_spec_xgboost_tune %>%
+    tune_grid(
+        resamples  = resamples_kfold,
+        param_info = parameters(wflw_spec_xgboost_tune) %>%
+            update(
+                learn_rate = learn_rate(range = c(0.001, 0.400), trans = NULL)
+            ),
+        grid = 10,
+        control = control_grid(verbose = TRUE, allow_par = TRUE)
+    )
+toc()
+
+
+# ** Results
+
+tune_results_xgboost %>% show_best("rmse", n = Inf)
+
+
+# ** Finalize
+
+wflw_fit_xgboost_tuned <- wflw_spec_xgboost_tune %>%
+    finalize_workflow(select_best(tune_results_xgboost, "rmse")) %>%
+    fit(train)
+
+
+
+# * RANGER TUNE ----
+
+# ** Tunable Specification
+
+model_spec_rf_tune <- rand_forest(
+    mode    = "regression",
+    mtry    = tune(),
+    trees   = tune(),
+    min_n   = tune()
+) %>% 
+    set_engine("ranger")
+
+
+wflw_spec_rf_tune <- workflow() %>%
+    add_model(model_spec_rf_tune) %>%
+    add_recipe(recipe_spec %>% update_role(data_venda, new_role = "indicator"))
+
+# ** Tuning
+
+tic()
+set.seed(123)
+tune_results_rf <- wflw_spec_rf_tune %>%
+    tune_grid(
+        resamples = resamples_kfold,
+        grid      = 5,
+        control   = control_grid(verbose = TRUE, allow_par = TRUE)
+    )
+toc()
+
+# ** Results
+
+tune_results_rf %>% show_best("rmse", n = Inf)
+
+# ** Finalize
+
+wflw_fit_rf_tuned <- wflw_spec_rf_tune %>%
+    finalize_workflow(select_best(tune_results_rf, "rmse")) %>%
+    fit(train)
+
+
+# * EARTH TUNE ----
+
+# ** Tunable Specification
+
+model_spec_earth_tune <- mars(
+    mode        = "regression",
+    num_terms   = tune(),
+    prod_degree = tune()
+) %>%
+    set_engine("earth")
+
+wflw_spec_earth_tune <- workflow() %>%
+    add_model(model_spec_earth_tune) %>%
+    add_recipe(recipe_spec %>% update_role(data_venda, new_role = "indicator"))
+
+# ** Tuning
+
+tic()
+set.seed(123)
+tune_results_earth <- wflw_spec_earth_tune %>%
+    tune_grid(
+        resamples = resamples_kfold, 
+        grid      = 10,
+        control   = control_grid(allow_par = TRUE, verbose = TRUE)
+    )
+toc()
+
+
+# ** Results
+tune_results_earth %>% show_best("rmse")
+
+
+# ** Finalize
+wflw_fit_earth_tuned <- wflw_spec_earth_tune %>%
+    finalize_workflow(tune_results_earth %>% select_best("rmse")) %>%
+    fit(train)
+
+
+
+
+# 6.0 EVALUATE PANEL FORECASTS  -----
+
+# * Model Table ----
+
+submodels_2_tbl <- modeltime_table(
+    wflw_fit_xgboost_tuned,
+    wflw_fit_rf_tuned,
+    wflw_fit_earth_tuned
+) %>%
+    update_model_description(1, "XGBOOST - Tuned") %>%
+    update_model_description(2, "RANGER - Tuned") %>%
+    update_model_description(3, "EARTH - Tuned") %>%
+    combine_modeltime_tables(submodels_1_tbl)
+
+
+# * Calibration ----
+calibration_tbl <- submodels_2_tbl %>%
+    modeltime_calibrate(testing(splits))
+
+# * Accuracy ----
+calibration_tbl %>% 
+    modeltime_accuracy() %>%
+    arrange(rmse)
+
+# * Forecast Test ----
+
+calibration_tbl %>%
+    modeltime_forecast(
+        new_data    = testing(splits),
+        actual_data = data_prepared_tbl,
+        keep_data   = TRUE 
+    ) %>%
+    group_by(local_de_venda) %>%
+    plot_modeltime_forecast(
+        .facet_ncol         = 1, 
+        .conf_interval_show = FALSE,
+        .interactive        = TRUE
+    )
+
+# Ranger é nosso melhor modelo
+
+calibration_tbl %>%
+  filter(.model_id == 6) %>% 
+  modeltime_forecast(
+    new_data    = testing(splits),
+    actual_data = data_prepared_tbl,
+    keep_data   = TRUE 
+  ) %>%
+  group_by(local_de_venda) %>% 
+  plot_modeltime_forecast(
+        .facet_ncol         = 1, 
+        .conf_interval_show = T,
+        .interactive        = TRUE
+    )
+
+calibration_best_tbl <- calibration_tbl %>%
+  filter(.model_id == 6)
+
+refit_tbl <- calibration_best_tbl %>% 
+  modeltime_refit(data_prepared_tbl)
+
+
+refit_tbl %>% 
+  modeltime_forecast(new_data = future_tbl, 
+                     actual_data = data_prepared_tbl,
+                     keep_data = TRUE) %>% 
+  group_by(local_de_venda) %>% 
+  plot_modeltime_forecast(.facet_ncol = 1)
+
+
+```
+
+Temos que back transform all data e finaliza
+
+
+
+## 5 - Com base em qualquer modelo ou premissa, qual 'Local de Venda' você considera mais crítico e por quê?
+
+Acho q uma EDA das vendas com o período por local de venda pode responder.
+Fazer o forecast por local de venda pode ser interessante tbm
+
+```{r}
+
+
+
+```
+
+## 6 - Análise de correlação de vendas com outros parâmetros (PIB, Dólar, População etc)
+
+Buscar indicadores sociais do período
+
+PIB
+Industria
+Desemprego
+
+
+
+```{r}
+
+
+
+```
+
+

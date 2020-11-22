@@ -5,8 +5,8 @@ navbar:
   left:
   - text: "Home"
     href: index.html
-  - text: "testing"
-    href: testing.html
+  - text: "Case 1"
+    href: case1.html
 output:
   html_document:
     theme: flatly
