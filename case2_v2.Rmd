@@ -167,7 +167,7 @@ Para isso utilizo a lib `naniar` que possui algumas visualizações interessante
 # antes de plotar fiz um filtro para olhar apenas paras as 5000 primeiras linhas
 g <- anac_2020_10_cleaned_tbl %>% 
   dplyr::slice(1:5000) %>% 
-  vis_miss(warn_large_data = F)
+  vis_miss()
 
 g
 ```
