@@ -7,6 +7,8 @@ navbar:
     href: index.html
   - text: "Case 1"
     href: case1_v1.html
+  - text: "Case 2"
+    href: case2_v2.html
 output:
   html_document:
     theme: flatly
