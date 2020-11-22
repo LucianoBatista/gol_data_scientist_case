@@ -1,8 +1,15 @@
 ---
-title: "Speed and Distance"
+title: "Gol Processso Seletivo"
 ---
 
-## Gol Case
+Essa página contêm os resultados dos dois cases solicitados para o processo seletivo de cientista de dados. Parte dos dados utilizados aqui foram cedidos pela empresa e são fictícios e outra parte foram extraídos da ANAC.
 
-Aqui você encontra os dois cases que foram solicitados!
+Como a forma de apresentação era livre, optei por disponibilizar online para caso não queira compilar em ambiente local, porém basta clonar o repositório e executar os arquivos ".Rmd" para obter os mesmos outputs.
+
+Contato:
+
+- [linkedin](https://www.linkedin.com/in/lucianobatistads/)
+- [github](https://github.com/LucianoBatista)
+- [blog](https://www.lobdata.com.br)
+
 

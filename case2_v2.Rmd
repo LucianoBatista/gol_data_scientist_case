@@ -1,7 +1,12 @@
 ---
-title: "case2_v2"
-output: html_document
+title: "Case 2"
 ---
+
+```{r setup, include=FALSE}
+knitr::opts_chunk$set(warning=FALSE, message=FALSE, dpi = 300, fig.align = "center", fig.width = 10, fig.height = 7)
+```
+
+No case 2 foi solicitado para o candidato realizar uma análise exploratória de dados com dados da ANAC.
 
 # Libs
 
@@ -50,7 +55,6 @@ anac_full_pass_tbl <- read_csv("dados/anac_full_final_tbl.csv") %>%
 Antes de continuar, um breve esclarecimento do pré-processamento feito no dataset `anac_full_pass_tbl`. Como eu já tive conhecimento de algumas características desses dados, optei por fazer algumas transformações antes de começar a utilizá-lo:
 - *tratamento de valores missing como 0:* tais valores são oriundos de períodos sem venda de passagens.
 - *drop de valores missing:* ao longo dos anos, alguns meses na base da ANAC não foram registrados, por isso optou-se em excluí-los com o `drop_na()`.
-
 
 # Dicionário de dados
 
@@ -154,7 +158,7 @@ O que podemos extrair desses resultados:
 - presença de missing values em algumas features (total de 12)
 - nas variáveis do tipo caractér, algumas possuem alta cardinalidade (174 no máximo)
 - nosso período aqui corresponde ao intervalo do mês de Outubro inteiro (`dt_referencia`)
-- nossas variáveis numéricas estão com uma forte skewnes positiva. Algumas aparentam ter outliers distorcendo a média, mas será verificado mais a frente.
+- nossas variáveis numéricas estão com uma forte skewnes positiva. Algumas aparentam ter outliers distorcendo a média.
 
 ## Visualizando os missings
 
@@ -167,7 +171,10 @@ Para isso utilizo a lib `naniar` que possui algumas visualizações interessante
 # antes de plotar fiz um filtro para olhar apenas paras as 5000 primeiras linhas
 g <- anac_2020_10_cleaned_tbl %>% 
   dplyr::slice(1:5000) %>% 
-  vis_miss()
+  vis_miss() +
+  labs(
+    y = "Observações"
+  )
 
 g
 ```
@@ -183,7 +190,8 @@ Podemos visualizar também de uma forma mais geral os missing values, pelo gráf
 
 ```{r}
 # adicionar um geom label
-gg_miss_var(anac_2020_10_cleaned_tbl)
+gg_miss_var(anac_2020_10_cleaned_tbl) +
+  labs(x = "Variáveis")
 
 ```
 
@@ -198,11 +206,31 @@ Nesse mês de Outubro nós tivemos um total de 62 empresas transitando pelo espa
 
 ```{r}
 anac_2020_10_cleaned_tbl %>% 
-  count(nm_empresa, nm_pais) %>% 
+  count(sg_empresa_icao, nm_pais) %>% 
   slice_max(order_by = n, n = 3) %>% 
+  mutate(sg_empresa_icao = case_when(
+    sg_empresa_icao == "GLO" ~ "GOL",
+    sg_empresa_icao == "AZU" ~ "AZUL",
+    TRUE ~ "TAM"
+  )) %>% 
   ggplot(aes(x = n,
-             y = nm_empresa)) +
-  geom_col()
+             y = fct_reorder(sg_empresa_icao, n),
+             color = sg_empresa_icao)) +
+  geom_segment(aes(xend = 0, yend = sg_empresa_icao, size = 3),
+               show.legend = F) +
+  geom_point(aes(size = n),
+             show.legend = F) +
+  geom_label(aes(label = n), 
+               fill = "white", 
+               hjust = "inward",
+               show.legend = F) +
+  scale_color_manual(values = c("#02D2DE", "#F24501", "#111E6C")) +
+  labs(
+    y = "Empresas do setor aéreo",
+    x = "Nr. de Passagens",
+    title = "Quantidade de passagens em Outubro/2020"
+  ) +
+  theme_minimal()
 
 
 
@@ -234,9 +262,22 @@ anac_2020_10_cleaned_tbl %>%
                            "AZUL LINHAS AÉREAS BRASILEIRAS S/A")) %>% 
   count(ds_di, nm_empresa) %>% 
   ggplot(aes(x = n,
-             y = ds_di)) +
-  geom_col() +
-  facet_wrap(~nm_empresa, scales = "free_x")
+             y = tidytext::reorder_within(ds_di, n, nm_empresa),
+             fill = nm_empresa)) +
+  geom_col(show.legend = F) +
+  geom_label(aes(label = scales::number(n, scale = 1e-3, suffix = "K", accuracy = .01)), 
+               fill = "white",
+               show.legend = F) +
+  scale_fill_manual(values = c("#02D2DE", "#F24501", "#111E6C")) +
+  tidytext::scale_y_reordered() +
+  facet_wrap(~nm_empresa, scales = "free", ncol = 1) +
+  labs(
+    title = "Quantidade de passagens por tipo de DI",
+    y = "",
+    x = "Valores totais",
+    caption = "linkedin.com/in/lucianobatistads/"
+  ) +
+  theme_minimal()
 
 ```
 
@@ -245,7 +286,9 @@ Horário de Transporte ou HOTRAN, que é o documento que formaliza as concessõe
 
 No plot acima vimos que a TAM é a única empresa do top 3 que não teve vôos extras sem HOTRAN, esse pode ser um quesito que a empresa precise averiguar para um possível aumento no número de vôos, tal quantia poderia ser suficiente para superar a GOL no ranking de vôos no mês de Outubro.
 
-## locations
+## Sankey Plots
+
+Sankey plots são super interessantes para observar a diversidade de regiões onde cada empresa de aviação está realizando mais transportes.
 
 ```{r}
 anac_2020_10_cleaned_tbl %>% 
@@ -253,6 +296,11 @@ anac_2020_10_cleaned_tbl %>%
   filter(nm_empresa %in% c("GOL LINHAS AÉREAS S.A. (EX- VRG LINHAS AÉREAS S.A.)", 
                            "TAM LINHAS AÉREAS S.A.",
                            "AZUL LINHAS AÉREAS BRASILEIRAS S/A")) %>%
+  mutate(nm_empresa = case_when(
+    nm_empresa == "GOL LINHAS AÉREAS S.A. (EX- VRG LINHAS AÉREAS S.A.)" ~ "GOL",
+    nm_empresa == "TAM LINHAS AÉREAS S.A." ~ "TAM",
+    TRUE ~ "AZUL"
+  )) %>% 
   count(nm_pais_origem, sg_uf_destino, nm_empresa) %>% 
   mutate(prop = n / sum(n)) %>% 
   ggplot(aes(axis1 = nm_empresa,
@@ -260,16 +308,24 @@ anac_2020_10_cleaned_tbl %>%
              y = prop)) +
   geom_alluvium(aes(fill = nm_empresa)) +
   geom_stratum() +
-  geom_text(stat = "stratum", aes(label = after_stat(stratum))) +
+  geom_text(stat = "stratum", aes(label = after_stat(stratum)), size = 3, min.y = .02) +
   scale_x_discrete(limits = c("origem", "destino"),
-                   expand = c(.1, .1))
-  
+                   expand = c(.1, .1)) +
+  scale_fill_manual(values =c("#02D2DE", "#F24501", "#111E6C")) +
+  labs(
+    y = "Proporção",
+    title = "Proporção de participação das empresas Top 3",
+    subtitle = "Considerando os destinos nacionais em que atuam"
+  ) +
+  theme_minimal() +
+  guides(fill = F)
 
 ```
 
 
-No cenário nacional podemos utilizar esse plot de Sankey para visualizar quais são os destinos mas utilizados pelo top 3 de empresas de aviação.
+No cenário nacional podemos ver que todas as empresas do top 3 possuem uma grande fatia de passagens para São Paulo. Rio de Janeiro é dominado pela Gol e Distrito Federal fica bem dividido entre TAM e GOL. Para a AZUL, fora São Paulo, Minas Gerais é o local onde a empresa mais realiza transporte.
 
+Vamos visualizar o cenário internacional agora.
 
 ```{r chunk_passagens_out}
 anac_2020_10_cleaned_tbl %>% 
@@ -277,6 +333,11 @@ anac_2020_10_cleaned_tbl %>%
   filter(nm_empresa %in% c("GOL LINHAS AÉREAS S.A. (EX- VRG LINHAS AÉREAS S.A.)", 
                            "TAM LINHAS AÉREAS S.A.",
                            "AZUL LINHAS AÉREAS BRASILEIRAS S/A")) %>%
+  mutate(nm_empresa = case_when(
+    nm_empresa == "GOL LINHAS AÉREAS S.A. (EX- VRG LINHAS AÉREAS S.A.)" ~ "GOL",
+    nm_empresa == "TAM LINHAS AÉREAS S.A." ~ "TAM",
+    TRUE ~ "AZUL"
+  )) %>% 
   count(nm_pais_origem, nm_pais_destino, nm_empresa) %>% 
   filter(nm_pais_destino != "BRASIL") %>% 
   mutate(prop = n / sum(n)) %>% 
@@ -285,19 +346,29 @@ anac_2020_10_cleaned_tbl %>%
              y = prop)) +
   geom_alluvium(aes(fill = nm_empresa)) +
   geom_stratum() +
-  geom_text(stat = "stratum", aes(label = after_stat(stratum))) +
+  geom_text(stat = "stratum", aes(label = after_stat(stratum)), size = 3, min.y = .02) +
   scale_x_discrete(limits = c("origem", "destino"),
-                   expand = c(.1, .1))
+                   expand = c(.1, .1)) +
+  scale_fill_manual(values =c("#02D2DE", "#F24501", "#111E6C")) +
+  labs(
+    y = "Proporção",
+    title = "Proporção de participação das empresas Top 3",
+    subtitle = "Considerando os destinos internacionais em que atuam"
+  ) +
+  theme_minimal() +
+  guides(fill = F)
 
 
 ```
 
 
-Quando olhamos o cenário internacional, vemos um grande domínio da TAM com viagens para ......
+Quando olhamos o cenário internacional, vemos um grande domínio da TAM com viagens para uma grande variedade de países, sendo a maior fatia para Estados Unidos da América. Em segundo lugar temos a AZUL com passagens principalmente para Estados Unidos da América e Portugal.
 
-Claramente é um ponto onde a GOL pode melhorar
+A GOL aqui possui a menor fatia de participação internacional com passagens para Paraguai e Perú, claramente é um ponto onde a GOL pode trabalhar para aumentar lucro.
 
 ## Timeseries passagens outubro
+
+Vamos visualizar agora a quantidade de passageiros ao longo do mês para cada uma das empresas.
 
 ```{r}
 anac_2020_10_cleaned_tbl %>% 
@@ -308,33 +379,34 @@ anac_2020_10_cleaned_tbl %>%
   group_by(dt_referencia, nm_empresa) %>% 
   summarise(total_pass = sum(total_pass)) %>% 
   ungroup() %>% 
-  plot_time_series(.date_var = dt_referencia, .value = total_pass, .color_var = nm_empresa, .facet_vars = nm_empresa, .smooth = F)
+  plot_time_series(.date_var = dt_referencia, .value = total_pass, .color_var = nm_empresa, .facet_vars = nm_empresa, .smooth = F, .interactive = F) +
+  labs(
+    color = "",
+    title = "Série temporal das passagens vendidas em Outubro",
+    subtitle = "Considerando as empresas do Top 3"
+  )
   
 ```
 
-Aqui vemos que a no gráfico mensal, diferentes empresas apresentam uma sazonalidade diferente, sendo todas diferente.
-
-[explicar cada padrão]
-
-
-
-## Kilogramas de bagagem
-
-relacionar com aeródromo e o top 3
-
-TODO
-
-HISTOGRAMS AND BOXPLOTS
-
-
-
-
-
+Apesar de um gráfico simples, aqui nós podemos visualizar que diferentes empresas apresentam padrões diferentes, algumas apresentam picos e quedas em um ciclo diário (TAM), outras a cada dois dias (AZUL) e a GOL um pouco irregular nesse mês de Outubro.
 
 # Time series passageiros
 
-```{r}
+Como dito no início, vamos visualizar um gráfico que possui a timeline completa desde 2000 até 2020 das passagens registradas na ANAC.
+
+```{r, fig.width=3, fig.height=3}
 anac_full_pass_tbl %>% 
-  plot_time_series(.date_var = dt_referencia, .value = total_pass)
+  plot_time_series(.date_var = dt_referencia, .value = total_pass,
+                   .title = "Série temporal dos últimos 20 anos de passagens aéreas")
 ```
 
+Como vemos, temos dois períodos que chamam atenção: 
+
+1. 2006: Conhecido como o apagão aéreo de 2006, onde após um acidente do voo Gol 1907 houveram dificuldades no transporte aéreo nacional.
+2. 2020: COVID-19
+
+No ano de 2006 ficou claro que o setor conseguiu se recuprar e veio crescendo até um período de 2015. Após esse ano o setor ficou lateralizado sem muita tendência de crescimento. Até então o estouro da pandamia, onde droparam completamente as passagens aéreas.
+
+Passado o período inicial da pandemia, o mercado começou a se reanimar e vem crescendo a partir de abril com alta ascensão.
+
+Novamente, caso queira ter acesso a base completa, basta acessar o arquivo `reading_all_base.Rmd` que tem toda a explicação.

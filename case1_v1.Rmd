@@ -2,6 +2,10 @@
 title: "Case 1"
 ---
 
+```{r setup, include=FALSE}
+knitr::opts_chunk$set(warning=FALSE, message=FALSE, dpi = 300, fig.align = "center", fig.width = 10, fig.height = 7)
+```
+
 No case 1 foi solicitado para resolver 6 diferentes questões, abaixo você encontra todo o código comentado responsável pelas análise juntamente com as justificativas de todo o processo.
 
 # Libs
@@ -61,7 +65,15 @@ A questão não foi explícita em solicitar a variável com a qual deseja a corr
 gol_case1 %>% 
   summarise_by_time(.date_var = data_venda, by = "day", rpk_total = sum(rpk)) %>% 
   select(-by) %>% 
-  plot_time_series(.date_var = data_venda, .value = rpk_total, .smooth = FALSE)
+  plot_time_series(.date_var = data_venda, .value = rpk_total, .smooth = FALSE, .interactive = F) +
+  scale_y_continuous(labels = scales::number_format(scale = 1e-3, suffix = "K")) +
+  labs(
+    y = "Total de RPK",
+    x = "Data",
+    title = "Série Temporal do Total de RPK",
+    caption = "linkedin.com/in/lucianobatistads/"
+  )
+
 ```
 
 Essa é nossa série temporal para o total de RPK, onde observamos alguns picos de passageiros ocorrendo mensalmente.
@@ -71,7 +83,12 @@ Essa é nossa série temporal para o total de RPK, onde observamos alguns picos 
 gol_case1 %>% 
   summarise_by_time(.date_var = data_venda, by = "day", rpk_total = sum(rpk)) %>% 
   select(-by) %>% 
-  plot_acf_diagnostics(.date_var = data_venda, .value = rpk_total)
+  plot_acf_diagnostics(.date_var = data_venda, .value = rpk_total, .interactive = F) +
+  labs(
+    title = "Diagnótico de Lags para Total de RPK",
+    
+    y = "Correlação"
+  )
 
 ```
 
@@ -93,10 +110,22 @@ summaries_q3_tbl <- gol_case1 %>%
 # média
 summaries_q3_tbl %>% 
   ggplot(aes(x = mean,
-             y = tidytext::reorder_within(year_char, mean, canal_de_venda))) +
+             y = tidytext::reorder_within(year_char, mean, canal_de_venda),
+             fill = mean)) +
   geom_col() +
   tidytext::scale_y_reordered() +
-  facet_wrap(~canal_de_venda, scales = "free_y", ncol = 1)
+  geom_label(aes(label = scales::number(mean, scale = 1e-3, suffix = "K")), 
+               fill = "white",
+               show.legend = F) +
+  scale_fill_gradient(low = "#EEC906", high = "#02D2DE") +
+  facet_wrap(~canal_de_venda, scales = "free_y", ncol = 1) +
+  labs(
+    title = "Média para cada canal de venda",
+    y = "",
+    x = "Valores das médias",
+    caption = "linkedin.com/in/lucianobatistads/"
+  ) +
+  theme_minimal()
 ```
 
 Para média, observando o gráfico, temos:
@@ -109,10 +138,21 @@ Para média, observando o gráfico, temos:
 # mediana
 summaries_q3_tbl %>% 
   ggplot(aes(x = median,
-             y = tidytext::reorder_within(year_char, median, canal_de_venda))) +
+             y = tidytext::reorder_within(year_char, median, canal_de_venda),
+             fill = median)) +
   geom_col() +
-  tidytext::scale_y_reordered() +
-  facet_wrap(~canal_de_venda, scales = "free", ncol = 1)
+  tidytext::scale_y_reordered() +geom_label(aes(label = scales::number(mean, scale = 1e-3, suffix = "K")), 
+               fill = "white",
+               show.legend = F) +
+  scale_fill_gradient(low = "#EEC906", high = "#02D2DE") +
+  facet_wrap(~canal_de_venda, scales = "free_y", ncol = 1) +
+  labs(
+    title = "Mediana para cada canal de venda",
+    y = "",
+    x = "Valores das medianas",
+    caption = "linkedin.com/in/lucianobatistads/"
+  ) +
+  theme_minimal()
 
 ```
 
@@ -139,7 +179,13 @@ ts_gol_case1_tbl %>%
                    .value = total_pax, 
                    .color_var = local_de_venda, 
                    .facet_var = local_de_venda,
-                   .smooth = F)
+                   .smooth = F,
+                   .interactive = F) +
+  labs(
+    title = "Séries temporais para os quatro locais de venda",
+    color = "Locais de Venda",
+    caption = "linkedin.com/in/lucianobatistads/"
+  )
 
 ```
 
@@ -147,17 +193,23 @@ O que temos aqui são 4 séries temporais com período diário, isso nos dá 152
 
 Vamos ver então como está a sazonalidade das 4 séries:
 
-```{r}
+```{r, fig.height=15}
 # sazonalidade arena e Ellipsis
 g1 <- ts_gol_case1_tbl %>% 
   group_by(local_de_venda) %>% 
   filter(local_de_venda %in% c("Arena", "Ellipsis")) %>% 
-  plot_seasonal_diagnostics(data_venda, log(total_pax), .interactive = F)
+  plot_seasonal_diagnostics(data_venda, log(total_pax), .interactive = F) +
+  labs(
+    title = "Diagnóstico para Arena e Ellipsis"
+  )
 
 g2 <- ts_gol_case1_tbl %>% 
   group_by(local_de_venda) %>% 
   filter(!local_de_venda %in% c("Arena", "Ellipsis")) %>% 
-  plot_seasonal_diagnostics(data_venda, log(total_pax), .interactive = F)
+  plot_seasonal_diagnostics(data_venda, log(total_pax), .interactive = F) +
+  labs(
+    title = "Diagnóstico para Mindscape e Vast"
+  )
 
 g1/g2
 
@@ -175,19 +227,31 @@ Também é super importante visualizarmos as auto-correlações das séries temp
 # auto correlação
 ts_gol_case1_tbl %>% 
   filter(local_de_venda == "Arena") %>% 
-  plot_acf_diagnostics(data_venda, log(total_pax), .show_white_noise_bars = T, .interactive = F)
+  plot_acf_diagnostics(data_venda, log(total_pax), .show_white_noise_bars = T, .interactive = F)+
+  labs(
+    title = "Diagnótico de Lags para Total de Arena"
+  )
 
 ts_gol_case1_tbl %>% 
   filter(local_de_venda == "Ellipsis") %>% 
-  plot_acf_diagnostics(data_venda, log(total_pax), .show_white_noise_bars = T, .interactive = F)
+  plot_acf_diagnostics(data_venda, log(total_pax), .show_white_noise_bars = T, .interactive = F)+
+  labs(
+    title = "Diagnótico de Lags para Total de Ellipsis"
+  )
 
 ts_gol_case1_tbl %>% 
   filter(local_de_venda == "Mindscape") %>% 
-  plot_acf_diagnostics(data_venda, log(total_pax), .show_white_noise_bars = T, .interactive = F)
+  plot_acf_diagnostics(data_venda, log(total_pax), .show_white_noise_bars = T, .interactive = F)+
+  labs(
+    title = "Diagnótico de Lags para Total de Mindscape"
+  )
 
 ts_gol_case1_tbl %>% 
   filter(local_de_venda == "Vast") %>% 
-  plot_acf_diagnostics(data_venda, log(total_pax), .show_white_noise_bars = T, .interactive = F)
+  plot_acf_diagnostics(data_venda, log(total_pax), .show_white_noise_bars = T, .interactive = F)+
+  labs(
+    title = "Diagnótico de Lags para Total de Vast"
+  )
 
 
 ```
@@ -229,8 +293,9 @@ gol_case1_splits %>%
   tk_time_series_cv_plan() %>% 
   plot_time_series_cv_plan(data_venda, total_pax, .interactive = F) +
   labs(
-    title = "Soybean Training and Testing Splits",
-    y = "BoxCox transformed values"
+    title = "Splits de treino e teste para Arena",
+    y = "Valores Transformados por BoxCox",
+    color = ""
   )
 ```
 
@@ -268,10 +333,11 @@ calibration_boxcox_tbl %>%
                      actual_data = ts_box_cox_gol_case1_tbl) %>% 
   plot_modeltime_forecast(.interactive = F) +
   labs(
-    title = "Soybean - Model Performance on Assessment Data",
-    y = "BoxCox transformed values",
-    caption = "linkedin.com/in/lucianobatistads/"
-    
+    title = "Performance do modelo nos dados de teste para Arena",
+    y = "Valores Transformados por BoxCox",
+    caption = "linkedin.com/in/lucianobatistads/",
+    color = "",
+    fill = ""
   )
 ```
 
@@ -281,7 +347,12 @@ O que vemos é que é bem difícil do modelo capturar uma boa variabilidade da s
 # vizualing residuals
 calibration_boxcox_tbl %>% 
   modeltime_residuals() %>%
-  plot_modeltime_residuals(.type = c("acf"), .show_white_noise_bars = T)
+  plot_modeltime_residuals(.type = c("acf"), .show_white_noise_bars = T, .interactive = F) +
+  labs(
+    title = "ACF/PACF dos resíduos",
+    y = "",
+    caption = "linkedin.com/in/lucianobatistads/"
+  )
 
 ```
 
@@ -297,10 +368,12 @@ refit_boxcox_tbl %>%
   modeltime_forecast(h = "19 days", actual_data = ts_box_cox_gol_case1_tbl) %>% 
   plot_modeltime_forecast(.interactive = F) +
   labs(
-    title = "Soybean - Demand Forecast",
-    subtitle = "Prediction for the next 3 years of Soybean Exports",
-    y = "BoxCox transformed values",
-    caption = "linkedin.com/in/lucianobatistads/"
+    title = "Forecast para o local de venda Arena",
+    subtitle = "Predição para os próximos 19 dias",
+    y = "Valores Transformados por BoxCox",
+    caption = "linkedin.com/in/lucianobatistads/",
+    color = "",
+    fill = ""
   )
 
 refit_boxcox_tbl %>% 
@@ -316,12 +389,14 @@ forecast_gol_case1_tbl <- forecast_boxcox_gol_case1_tbl %>%
 
 forecast_gol_case1_tbl %>% 
   plot_modeltime_forecast(.interactive = F) +
-  scale_y_continuous(labels = scales::number_format(scale = 1e-6, suffix = "M")) +
+  scale_y_continuous(labels = scales::number_format(scale = 1e-3, suffix = "K")) +
   labs(
-    title = "Soybean - Demand Forecast",
-    subtitle = "Prediction for the next 3 years of Soybean Exports",
-    y = "Millions of Tons",
-    caption = "linkedin.com/in/lucianobatistads/"
+    title = "Forecast para o local de venda Arena",
+    subtitle = "Predição para os próximos 19 dias",
+    y = "Valores do PAX",
+    caption = "linkedin.com/in/lucianobatistads/",
+    color = "",
+    fill = ""
   )
 
 ```
@@ -389,7 +464,13 @@ splits <- data_prepared_tbl %>%
 
 splits %>%
     tk_time_series_cv_plan() %>%
-    plot_time_series_cv_plan(data_venda, total_pax)
+    plot_time_series_cv_plan(data_venda, total_pax, .interactive = F) +
+  labs(
+    title = "Splits de treino e teste para todas as séries juntas",
+    subtitle = "Arena, Ellipsis, Mindscape, Vast",
+    color = "",
+    x = "Valores transformados em escala log"
+  )
 
 
 ```
@@ -402,7 +483,13 @@ train <- training(splits)
 
 train %>% 
   group_by(local_de_venda) %>% 
-  plot_time_series(data_venda, total_pax, .smooth = F)
+  plot_time_series(data_venda, total_pax, .smooth = F, .color_var = local_de_venda, .interactive = F) +
+  labs(
+    title = "Séries temporais de treino para os quatro locais de venda",
+    color = "Locais de Venda",
+    caption = "linkedin.com/in/lucianobatistads/",
+    x = "Valores transformados em escala log"
+  )
 
 # RECIPE ----
 
@@ -516,8 +603,14 @@ set.seed(123)
 resamples_kfold <- train %>% vfold_cv(v = 5)
 
 resamples_kfold %>%
-    tk_time_series_cv_plan() %>%
-    plot_time_series_cv_plan(data_venda, total_pax, .facet_ncol = 2)
+  tk_time_series_cv_plan() %>%
+  plot_time_series_cv_plan(data_venda, total_pax, .facet_ncol = 2, .interactive = F) +
+  labs(
+    title = "Reamostragens para o procedimento de cross-validação",
+    color = "",
+    caption = "linkedin.com/in/lucianobatistads/",
+    y = "Valores em escala log"
+  )
 
 ```
 
@@ -655,7 +748,7 @@ wflw_fit_earth_tuned <- wflw_spec_earth_tune %>%
 
 Nesse ponto, nós temos todos os modelos treinados e tunados e finalizados nos melhores parâmetros com os melhores RMSE.
 
-```{r}
+```{r, fig.width=3, fig.height=3}
 # Model Table ----
 
 submodels_2_tbl <- modeltime_table(
@@ -691,13 +784,14 @@ calibration_tbl %>%
     plot_modeltime_forecast(
         .facet_ncol         = 1, 
         .conf_interval_show = FALSE,
-        .interactive        = TRUE
+        .interactive        = TRUE,
+        .title = "Diferentes modelos para os quatros locais de venda"
     )
 ```
 
 Pelo visto acima, nosso melhor modelo, considerando o rmse foi o RANGER (Randon Forest) padrão, sem ser o modelo tunado.
 
-```{r}
+```{r, fig.width=3, fig.height=3}
 calibration_tbl %>%
   filter(.model_id == 6) %>% 
   modeltime_forecast(
@@ -709,7 +803,8 @@ calibration_tbl %>%
   plot_modeltime_forecast(
         .facet_ncol         = 1, 
         .conf_interval_show = T,
-        .interactive        = TRUE
+        .interactive        = TRUE,
+        .title = "Melhor modelo escolhido após tunning"
     )
 
 calibration_best_tbl <- calibration_tbl %>%
@@ -719,7 +814,7 @@ calibration_best_tbl <- calibration_tbl %>%
 
 A etapa de refit é importante para o workflow pois permite que o modelo seja retreinado utilizando todos os dados, e atualize caso identifique melhores parâmetros.
 
-```{r}
+```{r, fig.width=3, fig.height=3}
 refit_tbl <- calibration_best_tbl %>% 
   modeltime_refit(data_prepared_tbl)
 
@@ -729,8 +824,12 @@ refit_tbl %>%
                      actual_data = data_prepared_tbl,
                      keep_data = TRUE) %>% 
   group_by(local_de_venda) %>% 
-  plot_modeltime_forecast(.facet_ncol = 1)
+  plot_modeltime_forecast(.facet_ncol = 1,
+                          .title = "Predições para os próximos 19 dias")
 
+```
+
+```{r}
 # Após converter os valores de volta para escala original
 refit_tbl %>% 
   modeltime_forecast(new_data = future_tbl, 
@@ -740,9 +839,11 @@ refit_tbl %>%
          .conf_lo = exp(.conf_lo),
          .conf_hi = exp(.conf_hi)) %>%
   group_by(local_de_venda) %>% 
-  plot_modeltime_forecast()
-  
-
+  plot_modeltime_forecast(.interactive = F) +
+  labs(
+    title = "Predições para os próximos 19 dias",
+    y = "Escala correta do PAX após transformação"
+  )
 ```
 
 Esse é o nosso forecast para os próximos 19 dias.
@@ -838,7 +939,10 @@ gol_case1_correlation_indicators %>%
     rearrange(method = "PCA") %>% 
     shave() %>%
     # rplot need to receive a correlation matrix
-    rplot(shape = 15, colours = c("darkorange", "white", "darkcyan")) +
+    rplot(shape = 15, colours = c("#EEC906", "white", "#02D2DE")) +
+    labs(
+      title = "Correlações entre os indicadores escolhidos"
+    ) +
     theme_minimal() +
     theme(
         axis.text.x = element_text(angle = 45, hjust = 1)

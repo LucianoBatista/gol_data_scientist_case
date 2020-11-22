@@ -12,3 +12,6 @@ navbar:
 output:
   html_document:
     theme: flatly
+    highlight: tango
+    code_folding: hide
+    warning: FALSE
